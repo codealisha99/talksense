@@ -1,15 +1,16 @@
 import { DIMENSIONS, type PublicResult } from '../src/rubric.ts'
 
 // 1200x630 Open Graph card, drawn as SVG then rasterised (X and LinkedIn don't accept SVG).
+// Colours mirror the light theme tokens in src/styles.css.
 export const CARD_W = 1200
 export const CARD_H = 630
 
-const PAPER = '#f3f0e8'
-const CARD = '#faf8f3'
+const PAPER = '#f3efe6'
+const CARD = '#fbf9f4'
 const INK = '#161513'
-const MUTED = '#8a857a'
-const LINE = '#d9d3c5'
-const SIGNAL = '#ea580c'
+const MUTED = '#6b665c'
+const LINE = '#d9d2c3'
+const SIGNAL = '#b8400e'
 
 export const escapeXml = (s: string) =>
   s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[ch]!)
