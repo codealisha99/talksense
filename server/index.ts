@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { Resvg } from '@resvg/resvg-js'
 import { Hono, type Context, type MiddlewareHandler } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { getConnInfo } from '@hono/node-server/conninfo'
@@ -22,6 +23,8 @@ const TOPIC_MODEL = process.env.TOPIC_MODEL ?? 'gpt-6-luna' // short creative ta
 const AVOID_RECENT_TOPICS = 25
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024 // OpenAI's upload limit
 const MAX_TEXT_CHARS = 20_000
+const MAX_UPLOAD_BYTES = MAX_AUDIO_BYTES + 1024 * 1024 // audio plus multipart overhead
+const MAX_JSON_BYTES = 128 * 1024 // 20k chars of text is at most 80 KB of UTF-8
 
 class HttpError extends Error {
   status: 400 | 404 | 409 | 413 | 422 | 429
@@ -57,8 +60,9 @@ const idOf = (c: Context) => {
 const hits = new Map<string, { count: number; reset: number }>()
 function rateLimit(limit: number, windowMs: number): MiddlewareHandler {
   return async (c, next) => {
-    // Railway's edge appends the real client IP last; earlier X-Forwarded-For entries are client-controlled.
-    const ip = c.req.header('x-forwarded-for')?.split(',').at(-1)?.trim() || getConnInfo(c).remote.address || 'unknown'
+    // Railway's edge overwrites X-Real-IP with the client address (measured: caller-sent values are replaced).
+    // X-Forwarded-For ends in a per-request edge proxy IP, so it must not be used as the key.
+    const ip = c.req.header('x-real-ip')?.trim() || getConnInfo(c).remote.address || 'unknown'
     const now = Date.now()
     const entry = hits.get(ip)
     const current = entry && entry.reset > now ? { ...entry, count: entry.count + 1 } : { count: 1, reset: now + windowMs }
@@ -103,6 +107,14 @@ api.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store')
 })
 api.post('*', rateLimit(40, 10 * 60_000))
+
+// Reject oversized bodies before they are buffered: Content-Length is checked up front, streams are cut at the limit.
+const uploadLimit = bodyLimit({
+  maxSize: MAX_UPLOAD_BYTES,
+  onError: (c) => c.json({ error: 'That recording is too large. Keep it under 10 minutes.' }, 413),
+})
+const jsonLimit = bodyLimit({ maxSize: MAX_JSON_BYTES, onError: (c) => c.json({ error: 'That request is too large.' }, 413) })
+api.post('*', (c, next) => (c.req.path.endsWith('/transcript') ? uploadLimit : jsonLimit)(c, next))
 
 api.post('/sessions', async (c) => {
   const key = keyOf(c)
