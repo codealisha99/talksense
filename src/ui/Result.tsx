@@ -103,7 +103,7 @@ export default function Result({ result, transcript, isOwner, onNewTopic }: Prop
                 <StatusMark status={o.status} />
                 <div>
                   {o.objective}
-                  {o.evidence && <q>{o.evidence}</q>}
+                  {o.evidence && <q><mark>{o.evidence}</mark></q>}
                 </div>
               </li>
             ))}
@@ -159,7 +159,7 @@ function Reveal({ delay, children }: { delay: number; children: React.ReactNode 
   )
 }
 
-function StatusMark({ status }: { status: ObjectiveStatus }) {
+export function StatusMark({ status }: { status: ObjectiveStatus }) {
   if (status === 'covered') return <span aria-label="Covered"><Check /></span>
   if (status === 'partial') {
     return (

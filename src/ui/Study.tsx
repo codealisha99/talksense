@@ -8,12 +8,12 @@ const WEDGE_R = 122
 const TICK_OUTER = 172
 const LABEL_R = 146
 
-const polar = (r: number, turn: number) => {
+export const polar = (r: number, turn: number) => {
   const a = -turn * 2 * Math.PI // counter-clockwise from 12 o'clock, like the real thing
   return [C + r * Math.sin(a), C - r * Math.cos(a)] as const
 }
 
-function wedgePath(f: number) {
+export function wedgePath(f: number) {
   if (f <= 0.0005) return ''
   if (f >= 0.9995) return `M ${C} ${C - WEDGE_R} A ${WEDGE_R} ${WEDGE_R} 0 1 0 ${C} ${C + WEDGE_R} A ${WEDGE_R} ${WEDGE_R} 0 1 0 ${C} ${C - WEDGE_R} Z`
   const [x, y] = polar(WEDGE_R, f)
