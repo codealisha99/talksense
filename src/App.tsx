@@ -10,6 +10,8 @@ import Processing, { type Step } from './ui/Processing.tsx'
 import Result from './ui/Result.tsx'
 import Settings from './ui/Settings.tsx'
 import Study from './ui/Study.tsx'
+import StepRail, { type RailStep } from './ui/StepRail.tsx'
+import ShareExplainer from './ui/ShareExplainer.tsx'
 import { Banner, Button, ProgressLine, Screen, spring } from './ui/primitives.tsx'
 
 type Session = { id: string; topic: string; minutes: number; brief: Brief }
@@ -52,10 +54,11 @@ export default function App() {
   const [flow, setFlow] = useState<Flow>(loadFlow)
   const [key, setKeyState] = useState(getKey)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [pastSessions, setPastSessions] = useState<HistoryItem[]>([])
+  const [pastSessions, setPastSessions] = useState<HistoryItem[] | null>(null) // null until loaded
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const pendingAudio = useRef<Blob | null>(null) // a recording whose upload failed for a transient reason
+  const pendingStart = useRef<{ topic: string; minutes: number } | null>(null) // started before a key was added
 
   useEffect(() => localStorage.setItem(FLOW_STORAGE, JSON.stringify(flow)), [flow])
   useEffect(() => {
@@ -66,7 +69,8 @@ export default function App() {
   useEffect(() => { if (flow.stage !== 'study') document.title = 'Talksense' }, [flow.stage])
 
   const refreshHistory = useCallback(() => {
-    api.history().then(setPastSessions).catch(() => { /* history is non-critical; home still works without it */ })
+    // History is non-critical: on failure, home falls back to the first-visit page rather than blocking.
+    api.history().then(setPastSessions).catch(() => setPastSessions((prev) => prev ?? []))
   }, [])
   useEffect(refreshHistory, [refreshHistory])
 
@@ -133,18 +137,33 @@ export default function App() {
     return audio ? () => submit(f, { audio }) : undefined
   }
 
-  const saveKey = (next: string) => { setKey(next); setKeyState(next); setSettingsOpen(false) }
-  const streak = statsFor(pastSessions).streak
+  const needKey = (pending: { topic: string; minutes: number } | null) => {
+    pendingStart.current = pending
+    setSettingsOpen(true)
+  }
+  const saveKey = (next: string) => {
+    setKey(next)
+    setKeyState(next)
+    setSettingsOpen(false)
+    const pending = pendingStart.current
+    pendingStart.current = null
+    if (next && pending) createSession(pending.topic, pending.minutes) // continue what they started
+  }
+  const closeSettings = () => { pendingStart.current = null; setSettingsOpen(false) }
+  const streak = statsFor(pastSessions ?? []).streak
   const viewingShare = shareId(path)
+  const railStep = RAIL[flow.stage]
+  const wide = viewingShare !== null || flow.stage === 'home'
 
   return (
-    <div className="shell">
+    <div className={wide ? 'shell wide' : 'shell'}>
       {busy && <ProgressLine />}
       <header className="topbar">
         <button className="wordmark" onClick={navigateHome} aria-label="Talksense home">
           <motion.span className="dot" animate={{ scale: [1, 1.35, 1] }} transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }} />
           talksense
         </button>
+        {railStep && !viewingShare && <StepRail current={railStep} />}
         <div className="topbar-right">
           <AnimatePresence>
             {streak > 0 && (
@@ -162,12 +181,12 @@ export default function App() {
 
       <AnimatePresence mode="wait">
         {viewingShare ? (
-          <SharedResult key={`share-${viewingShare}`} id={viewingShare} isOwner={pastSessions.some((h) => h.id === viewingShare)} onNewTopic={navigateHome} />
+          <SharedResult key={`share-${viewingShare}`} id={viewingShare} isOwner={(pastSessions ?? []).some((h) => h.id === viewingShare)} onNewTopic={navigateHome} />
         ) : (
           <motion.div key={flow.stage} style={{ display: 'contents' }}>
             {error && flow.stage !== 'answer' && <div style={{ marginTop: 16 }}><Banner message={error} /></div>}
             {flow.stage === 'home' && (
-              <Home hasKey={!!key} busy={busy} history={pastSessions} onStart={createSession} onOpenSettings={() => setSettingsOpen(true)} />
+              <Home hasKey={!!key} busy={busy} history={pastSessions} onStart={createSession} onNeedKey={needKey} />
             )}
             {flow.stage === 'brief' && (
               <BriefScreen {...flow} busy={busy} onStart={() => startTimer(flow)} onBack={() => go(HOME)} />
@@ -191,13 +210,15 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {settingsOpen && <Settings initialKey={key} onSave={saveKey} onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && <Settings initialKey={key} onSave={saveKey} onClose={closeSettings} />}
       </AnimatePresence>
     </div>
   )
 }
 
 const session = ({ id, topic, minutes, brief }: Session): Session => ({ id, topic, minutes, brief })
+
+const RAIL: Partial<Record<Flow['stage'], RailStep>> = { brief: 'Brief', study: 'Study', answer: 'Explain', processing: 'Explain', result: 'Rated' }
 
 function SharedResult({ id, isOwner, onNewTopic }: { id: string; isOwner: boolean; onNewTopic: () => void }) {
   const [result, setResult] = useState<PublicResult | null>(null)
@@ -207,7 +228,14 @@ function SharedResult({ id, isOwner, onNewTopic }: { id: string; isOwner: boolea
     api.result(id).then(setResult).catch((e) => setError(e instanceof Error ? e.message : 'Could not load this result.'))
   }, [id])
 
-  if (result) return <Result result={result} isOwner={isOwner} onNewTopic={onNewTopic} />
+  if (result) {
+    return (
+      <>
+        <Result result={result} isOwner={isOwner} onNewTopic={onNewTopic} />
+        {!isOwner && <ShareExplainer onStart={onNewTopic} />}
+      </>
+    )
+  }
   return (
     <Screen>
       {error ? (
