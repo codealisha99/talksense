@@ -236,3 +236,19 @@ details.transcript p { color: var(--ink-2); }
   .ticket { padding: 22px 20px 20px; }
   .ticket-cut { margin: 20px -20px; }
 }
+
+/* ---------- surprise me ---------- */
+.hook { margin: 18px 0 0; font: italic 400 19px/1.4 var(--serif); color: var(--ink-2); max-width: 60ch; }
+.surprise { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.btn.roll { height: 38px; padding: 0 14px; font-size: 14px; }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chip { position: relative; border: 1px solid transparent; background: none; height: 32px; padding: 0 11px; border-radius: 999px; cursor: pointer; font: 12px var(--mono); color: var(--muted); transition: color .2s; }
+.chip:hover { color: var(--ink); }
+.chip[aria-pressed='true'] { color: var(--ink); }
+.chip-pill { position: absolute; inset: 0; border-radius: 999px; border: 1px solid var(--ink); }
+.chip span:last-child { position: relative; }
+.topic-field input[readonly] { color: var(--signal); }
+@media (max-width: 600px) {
+  .chips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -20px; padding: 0 20px; scrollbar-width: none; }
+  .chip { flex-shrink: 0; }
+}

@@ -2,7 +2,10 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { DURATIONS, MAX_TOPIC_LENGTH, type HistoryItem } from '../rubric.ts'
 import { statsFor } from '../progress.ts'
-import { Arrow, Button, Screen, easeOut, item, list, spring } from './primitives.tsx'
+import { api } from '../api.ts'
+import { NICHES, type Niche } from '../topics.ts'
+import { Arrow, Banner, Button, Screen, easeOut, item, list, spring } from './primitives.tsx'
+import { useScramble } from './useScramble.ts'
 
 const EXAMPLES = [
   'How sourdough fermentation works',
@@ -27,8 +30,32 @@ export default function Home({ hasKey, busy, history, onStart, onOpenSettings }:
   const [topic, setTopic] = useState('')
   const [minutes, setMinutes] = useState<number>(20)
   const [example, setExample] = useState(0)
+  const [niche, setNiche] = useState<Niche | null>(null)
+  const [hook, setHook] = useState('')
+  const [rolling, setRolling] = useState(false)
+  const [rollError, setRollError] = useState('')
+  const scramble = useScramble()
   const stats = statsFor(history)
-  const canStart = hasKey && topic.trim().length >= 2 && !busy
+  const canStart = hasKey && topic.trim().length >= 2 && !busy && !rolling
+
+  async function roll() {
+    if (!hasKey) return onOpenSettings()
+    setRollError('')
+    setHook('')
+    setRolling(true)
+    scramble.spin()
+    try {
+      const idea = await api.randomTopic(niche)
+      await scramble.settle(idea.topic)
+      setTopic(idea.topic)
+      setHook(idea.hook)
+    } catch (e) {
+      scramble.cancel()
+      setRollError(e instanceof Error ? e.message : 'Could not get a random topic.')
+    } finally {
+      setRolling(false)
+    }
+  }
 
   useEffect(() => {
     if (topic) return
@@ -52,15 +79,17 @@ export default function Home({ hasKey, busy, history, onStart, onOpenSettings }:
           <div className="topic-field">
             <input
               id="topic"
-              value={topic}
+              value={scramble.display ?? topic}
+              readOnly={scramble.display !== null}
+              aria-busy={rolling}
               maxLength={MAX_TOPIC_LENGTH}
               autoComplete="off"
               spellCheck
-              onChange={(e) => setTopic(e.target.value)}
+              onChange={(e) => { setTopic(e.target.value); setHook('') }}
               onKeyDown={(e) => e.key === 'Enter' && submit()}
             />
             <AnimatePresence mode="wait">
-              {!topic && (
+              {!topic && scramble.display === null && (
                 <motion.span
                   key={example}
                   className="placeholder"
@@ -76,7 +105,29 @@ export default function Home({ hasKey, busy, history, onStart, onOpenSettings }:
             </AnimatePresence>
             {topic.length > MAX_TOPIC_LENGTH - 30 && <span className="counter">{topic.length}/{MAX_TOPIC_LENGTH}</span>}
           </div>
+          <AnimatePresence>
+            {hook && (
+              <motion.p key={hook} className="hook" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.4, ease: easeOut }}>
+                {hook}
+              </motion.p>
+            )}
+          </AnimatePresence>
         </motion.div>
+
+        <motion.div className="surprise" variants={item}>
+          <Button variant="ghost" className="roll" onClick={roll} disabled={rolling || busy} aria-label="Give me a random topic">
+            <Die rolling={rolling} /> {rolling ? 'Rolling…' : topic && hook ? 'Roll again' : 'Surprise me'}
+          </Button>
+          <div className="chips" role="group" aria-label="Random topic niche (optional)">
+            {[null, ...NICHES].map((n) => (
+              <button key={n ?? 'any'} className="chip" aria-pressed={n === niche} onClick={() => setNiche(n)}>
+                {n === niche && <motion.span layoutId="niche-pill" className="chip-pill" transition={spring} />}
+                <span>{n ?? 'Anything'}</span>
+              </button>
+            ))}
+          </div>
+        </motion.div>
+        {rollError && <Banner message={rollError} />}
 
         <motion.div className="row" style={{ justifyContent: 'space-between', gap: 16 }} variants={item}>
           <div className="segmented" role="group" aria-label="Study time">
@@ -139,5 +190,21 @@ function Stat({ label, value }: { label: string; value: number }) {
       <span className="kicker">{label}</span>
       <b className="mono-num">{value}</b>
     </div>
+  )
+}
+
+/** A die that tumbles while a random topic is being rolled. */
+function Die({ rolling }: { rolling: boolean }) {
+  return (
+    <motion.svg
+      width="18" height="18" viewBox="0 0 18 18" aria-hidden
+      animate={rolling ? { rotate: [0, 90, 180, 270, 360] } : { rotate: 0 }}
+      transition={rolling ? { duration: 0.6, repeat: Infinity, ease: 'linear' } : spring}
+    >
+      <rect x="1.5" y="1.5" width="15" height="15" rx="3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      {[[5.5, 5.5], [12.5, 5.5], [9, 9], [5.5, 12.5], [12.5, 12.5]].map(([cx, cy]) => (
+        <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="1.3" fill="currentColor" />
+      ))}
+    </motion.svg>
   )
 }

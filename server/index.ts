@@ -10,10 +10,13 @@ import {
   BRIEF_SCHEMA, DURATIONS, GRADE_SCHEMA, MAX_TOPIC_LENGTH, MIN_ANSWER_WORDS, briefPrompt, gradePrompt,
   levelFor, totalScore, wordCount, type Brief, type Grade, type HistoryItem, type PublicResult,
 } from '../src/rubric.ts'
+import { NICHES, RANDOM_TOPIC_SCHEMA, randomTopicPrompt, type RandomTopic } from '../src/topics.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const CHAT_MODEL = process.env.CHAT_MODEL ?? 'gpt-6-astra'
 const TRANSCRIBE_MODEL = process.env.TRANSCRIBE_MODEL ?? 'gpt-transcribe'
+const TOPIC_MODEL = process.env.TOPIC_MODEL ?? 'gpt-6-luna' // short creative task: fast, cheap model is enough
+const AVOID_RECENT_TOPICS = 25
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024 // OpenAI's upload limit
 const MAX_TEXT_CHARS = 20_000
 
@@ -36,6 +39,7 @@ const createBody = z.object({
 })
 const deviceBody = z.object({ deviceId: uuid })
 const textBody = deviceBody.extend({ text: z.string().max(MAX_TEXT_CHARS) })
+const randomTopicBody = deviceBody.extend({ niche: z.enum(NICHES).nullable().default(null) })
 
 const keyOf = (c: Context) => openAiKey.parse(c.req.header('x-openai-key') ?? '')
 const idOf = (c: Context) => {
@@ -105,6 +109,17 @@ api.post('/sessions', async (c) => {
     VALUES (${deviceId}, ${topic}, ${minutes}, ${JSON.stringify(brief)})
     RETURNING id`
   return c.json({ data: { id: row.id, brief } })
+})
+
+api.post('/topics/random', async (c) => {
+  const key = keyOf(c)
+  const { deviceId, niche } = randomTopicBody.parse(await c.req.json())
+  const recent = await sql`SELECT topic FROM sessions WHERE device_id = ${deviceId} ORDER BY created_at DESC LIMIT ${AVOID_RECENT_TOPICS}`
+  const { area, prompt } = randomTopicPrompt(niche, recent.map((r) => r.topic))
+  const idea = await structured<RandomTopic>(key, TOPIC_MODEL, 'random_topic', RANDOM_TOPIC_SCHEMA, prompt)
+  const topic = idea.topic.trim().slice(0, MAX_TOPIC_LENGTH)
+  if (topic.length < 2) throw new UpstreamError('OpenAI returned an empty idea. Roll again.', 502)
+  return c.json({ data: { topic, hook: idea.hook.trim(), niche: area } })
 })
 
 api.post('/sessions/:id/start', async (c) => {

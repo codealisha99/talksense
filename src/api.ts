@@ -1,4 +1,5 @@
 import type { Brief, HistoryItem, PublicResult } from './rubric.ts'
+import type { Niche, RandomTopic } from './topics.ts'
 
 const KEY_STORAGE = 'talksense.key'
 const DEVICE_STORAGE = 'talksense.device'
@@ -34,6 +35,8 @@ async function request<T>(path: string, init: RequestInit = {}, json?: unknown):
 const post = <T>(path: string, json: unknown) => request<T>(path, { method: 'POST' }, json)
 
 export const api = {
+  randomTopic: (niche: Niche | null) =>
+    post<RandomTopic & { niche: Niche }>('/topics/random', { deviceId, niche }),
   createSession: (topic: string, minutes: number) =>
     post<{ id: string; brief: Brief }>('/sessions', { deviceId, topic, minutes }),
   start: (id: string) => post<{ startedAt: string }>(`/sessions/${id}/start`, { deviceId }),
