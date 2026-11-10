@@ -30,3 +30,13 @@ test('word count', () => {
   assert.equal(wordCount('  a  b\nc '), 3)
   assert.equal(wordCount(''), 0)
 })
+
+test('studied minutes are measured from start but never exceed the chosen study time', async () => {
+  const { studiedMinutes } = await import('./rubric.ts')
+  const start = Date.UTC(2026, 10, 10, 9, 0)
+  assert.equal(studiedMinutes(start, start + 7 * 60_000, 20), 7) // finished early
+  assert.equal(studiedMinutes(start, start + 26 * 60_000, 20), 20) // timer ran out, then spoke for 6 min
+  assert.equal(studiedMinutes(start, start + 3 * 86_400_000, 20), 20) // resumed days later
+  assert.equal(studiedMinutes(start, start + 10_000, 20), 1) // at least one minute
+  assert.equal(studiedMinutes(null, start, 20), null) // timer never started
+})

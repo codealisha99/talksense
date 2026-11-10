@@ -141,6 +141,15 @@ export function gradePrompt(topic: string, brief: Brief, transcript: string) {
 const clamp = (n: number) => Math.min(4, Math.max(0, Number.isFinite(n) ? n : 0))
 
 /** Weighted score 0-100. */
+/**
+ * Minutes studied, for the public result. Measured from timer start to grading, so it can include talking time;
+ * clamped to the chosen duration because the timer ends study there (and a session may be resumed much later).
+ */
+export function studiedMinutes(startedAt: number | null, now: number, minutes: number): number | null {
+  if (startedAt === null) return null
+  return Math.min(minutes, Math.max(1, Math.round((now - startedAt) / 60_000)))
+}
+
 export function totalScore(dimensions: Grade['dimensions']): number {
   const sum = DIMENSIONS.reduce((acc, d) => acc + (d.weight * clamp(dimensions[d.id]?.score)) / 4, 0)
   return Math.round(sum * 100)

@@ -56,9 +56,15 @@ export async function structured<T>(
       text: { format: { type: 'json_schema', name, schema, strict: true } },
     }),
   })
-  const text = body?.output
-    ?.flatMap((o: any) => (o.type === 'message' ? o.content : []))
-    .find((c: any) => c.type === 'output_text')?.text
+  if (body?.status === 'incomplete') throw new UpstreamError('The AI response was cut off. Please try again.', 502)
+  const parts = body?.output?.flatMap((o: any) => (o.type === 'message' ? o.content : [])) ?? []
+  if (parts.some((c: any) => c.type === 'refusal')) throw new UpstreamError('OpenAI declined to answer this request.', 400)
+  const text = parts.find((c: any) => c.type === 'output_text')?.text
   if (!text) throw new UpstreamError('OpenAI returned no usable answer. Please try again.', 502)
-  return JSON.parse(text) as T
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    // Must not escape as a SyntaxError: the error handler would blame the client's request body.
+    throw new UpstreamError('OpenAI returned a malformed answer. Please try again.', 502)
+  }
 }

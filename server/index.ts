@@ -11,7 +11,7 @@ import { migrate, sql } from './db.ts'
 import { structured, transcribe, UpstreamError } from './openai.ts'
 import {
   BRIEF_SCHEMA, DURATIONS, GRADE_SCHEMA, MAX_TOPIC_LENGTH, MIN_ANSWER_WORDS, briefPrompt, gradePrompt,
-  levelFor, totalScore, wordCount, type Brief, type Grade, type HistoryItem, type PublicResult,
+  levelFor, studiedMinutes, totalScore, wordCount, type Brief, type Grade, type HistoryItem, type PublicResult,
 } from '../src/rubric.ts'
 import { shareCardSvg } from './shareCard.ts'
 import { NICHES, RANDOM_TOPIC_SCHEMA, randomTopicPrompt, type RandomTopic } from '../src/topics.ts'
@@ -189,7 +189,7 @@ api.post('/sessions/:id/grade', async (c) => {
 
   const grade = await structured<Grade>(key, CHAT_MODEL, 'grade', GRADE_SCHEMA, gradePrompt(session.topic, session.brief, session.transcript))
   const score = totalScore(grade.dimensions)
-  const studied = session.started_at ? Math.max(1, Math.round((Date.now() - new Date(session.started_at).getTime()) / 60_000)) : null
+  const studied = studiedMinutes(session.started_at ? new Date(session.started_at).getTime() : null, Date.now(), session.minutes)
   const [row] = await sql`
     UPDATE sessions
     SET grade = ${JSON.stringify(grade)}, score = ${score}, level = ${levelFor(score)},
@@ -246,7 +246,7 @@ const publicOrigin = (c: Context) => {
 const FONT_DIR = fileURLToPath(new URL('./fonts/', import.meta.url))
 const FONT_FILES = ['InstrumentSerif-Regular.ttf', 'InstrumentSerif-Italic.ttf', 'GeistMono.ttf'].map((f) => FONT_DIR + f)
 // Graded results never change, so a rendered card can be cached forever.
-// ponytail: in-process LRU of 200 cards (~60 KB each); move to a CDN/object store if share traffic grows.
+// ponytail: in-process FIFO of 200 cards (~60 KB each); move to a CDN/object store if share traffic grows.
 const MAX_CACHED_CARDS = 200
 const cardCache = new Map<string, Buffer>()
 
