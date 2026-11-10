@@ -8,11 +8,12 @@
     "dev:api": "node --env-file-if-exists=.env --watch server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "node server/index.ts",
-    "test": "node --test src/*.test.ts"
+    "test": "node --test src/*.test.ts server/*.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.6",
     "@neondatabase/serverless": "^1.2.0",
+    "@resvg/resvg-js": "^2.6.2",
     "hono": "^4.13.17",
     "motion": "^14.12.0",
     "react": "^19.3.1",

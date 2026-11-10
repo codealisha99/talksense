@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { Resvg } from '@resvg/resvg-js'
 import { Hono, type Context, type MiddlewareHandler } from 'hono'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -10,6 +12,7 @@ import {
   BRIEF_SCHEMA, DURATIONS, GRADE_SCHEMA, MAX_TOPIC_LENGTH, MIN_ANSWER_WORDS, briefPrompt, gradePrompt,
   levelFor, totalScore, wordCount, type Brief, type Grade, type HistoryItem, type PublicResult,
 } from '../src/rubric.ts'
+import { shareCardSvg } from './shareCard.ts'
 import { NICHES, RANDOM_TOPIC_SCHEMA, randomTopicPrompt, type RandomTopic } from '../src/topics.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
@@ -54,7 +57,8 @@ const idOf = (c: Context) => {
 const hits = new Map<string, { count: number; reset: number }>()
 function rateLimit(limit: number, windowMs: number): MiddlewareHandler {
   return async (c, next) => {
-    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || getConnInfo(c).remote.address || 'unknown'
+    // Railway's edge appends the real client IP last; earlier X-Forwarded-For entries are client-controlled.
+    const ip = c.req.header('x-forwarded-for')?.split(',').at(-1)?.trim() || getConnInfo(c).remote.address || 'unknown'
     const now = Date.now()
     const entry = hits.get(ip)
     const current = entry && entry.reset > now ? { ...entry, count: entry.count + 1 } : { count: 1, reset: now + windowMs }
@@ -221,19 +225,54 @@ let indexHtml: string | null = null
 const loadIndex = async () => (indexHtml ??= await readFile('./dist/index.html', 'utf8'))
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
 
+/** Public origin as the visitor sees it (Railway terminates TLS in front of us). */
+const publicOrigin = (c: Context) => {
+  const proto = c.req.header('x-forwarded-proto')?.split(',')[0]?.trim() ?? new URL(c.req.url).protocol.replace(':', '')
+  return `${proto}://${c.req.header('host') ?? new URL(c.req.url).host}`
+}
+
+const FONT_DIR = fileURLToPath(new URL('./fonts/', import.meta.url))
+const FONT_FILES = ['InstrumentSerif-Regular.ttf', 'InstrumentSerif-Italic.ttf', 'GeistMono.ttf'].map((f) => FONT_DIR + f)
+// Graded results never change, so a rendered card can be cached forever.
+// ponytail: in-process LRU of 200 cards (~60 KB each); move to a CDN/object store if share traffic grows.
+const MAX_CACHED_CARDS = 200
+const cardCache = new Map<string, Buffer>()
+
+app.get('/r/:id/card.png', async (c) => {
+  const id = uuid.safeParse(c.req.param('id'))
+  if (!id.success) return c.notFound()
+  let png = cardCache.get(id.data)
+  if (!png) {
+    const [row] = await sql`SELECT topic, score, level, minutes, studied_minutes, grade FROM sessions WHERE id = ${id.data} AND grade IS NOT NULL`
+    if (!row) return c.notFound()
+    const svg = shareCardSvg({
+      topic: row.topic, score: row.score, level: row.level, minutes: row.minutes,
+      studiedMinutes: row.studied_minutes, dimensions: row.grade.dimensions,
+    })
+    png = new Resvg(svg, { font: { fontFiles: FONT_FILES, loadSystemFonts: false, defaultFontFamily: 'Geist Mono' } }).render().asPng()
+    if (cardCache.size >= MAX_CACHED_CARDS) cardCache.delete(cardCache.keys().next().value!)
+    cardCache.set(id.data, png)
+  }
+  return c.body(new Uint8Array(png), 200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=31536000, immutable' })
+})
+
 app.get('/r/:id', async (c) => {
   const html = await loadIndex()
   const id = uuid.safeParse(c.req.param('id'))
   const [row] = id.success ? await sql`SELECT topic, score, level FROM sessions WHERE id = ${id.data} AND grade IS NOT NULL` : []
-  if (!row) return c.html(html, 404)
+  if (!row || !id.success) return c.html(html, 404)
   const title = escapeHtml(`${row.score}/100 on “${row.topic}” · Talksense`)
   const desc = escapeHtml(`Studied it, then explained it out loud. Rated ${row.level}. Can you beat it?`)
   const meta = [
     `<meta property="og:title" content="${title}">`,
     `<meta property="og:description" content="${desc}">`,
     `<meta property="og:type" content="article">`,
-    `<meta property="og:url" content="${escapeHtml(c.req.url)}">`,
-    `<meta name="twitter:card" content="summary">`,
+    `<meta property="og:url" content="${escapeHtml(`${publicOrigin(c)}/r/${id.data}`)}">`,
+    `<meta property="og:image" content="${escapeHtml(`${publicOrigin(c)}/r/${id.data}/card.png`)}">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
+    `<meta property="og:image:alt" content="${title}">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${title}">`,
     `<meta name="twitter:description" content="${desc}">`,
     `<meta name="description" content="${desc}">`,
