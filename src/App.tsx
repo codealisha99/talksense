@@ -1,240 +1,196 @@
-import { useEffect, useState } from 'react'
-import Answer from './Answer.tsx'
-import { structured, transcribe } from './openai.ts'
-import {
-  BRIEF_SCHEMA, DIMENSIONS, GRADE_SCHEMA, MIN_ANSWER_WORDS, briefPrompt, gradePrompt, levelFor,
-  shareText, totalScore, wordCount, type Brief, type Grade,
-} from './rubric.ts'
+import { AnimatePresence, motion } from 'motion/react'
+import { useCallback, useEffect, useState } from 'react'
+import { api, getKey, setKey } from './api.ts'
+import { statsFor } from './progress.ts'
+import type { Brief, HistoryItem, PublicResult } from './rubric.ts'
+import Answer from './ui/Answer.tsx'
+import BriefScreen from './ui/BriefScreen.tsx'
+import Home from './ui/Home.tsx'
+import Processing, { type Step } from './ui/Processing.tsx'
+import Result from './ui/Result.tsx'
+import Settings from './ui/Settings.tsx'
+import Study from './ui/Study.tsx'
+import { Banner, Button, ProgressLine, Screen, spring } from './ui/primitives.tsx'
 
-const DURATIONS = [15, 20, 30]
-// Model IDs as of Nov 2026; editable in Settings so a rename never breaks the app.
-const DEFAULT_SETTINGS = { key: '', chatModel: 'gpt-6-astra', transcribeModel: 'gpt-transcribe' }
-type Settings = typeof DEFAULT_SETTINGS
+type Session = { id: string; topic: string; minutes: number; brief: Brief }
+type Flow =
+  | { stage: 'home' }
+  | ({ stage: 'brief' } & Session)
+  | ({ stage: 'study'; startedAt: number } & Session)
+  | ({ stage: 'answer' } & Session)
+  | ({ stage: 'processing'; step: Step; transcript: string } & Session)
+  | { stage: 'result'; result: PublicResult; transcript: string }
 
-type Stage = 'topic' | 'brief' | 'study' | 'answer' | 'working' | 'result'
+const FLOW_STORAGE = 'talksense.flow'
+const HOME: Flow = { stage: 'home' }
 
-function loadSettings(): Settings {
+/** Restore an in-progress session after a reload; a request that was in flight resumes at the answer step. */
+function loadFlow(): Flow {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('talksense.settings') ?? '{}') }
+    const saved = JSON.parse(localStorage.getItem(FLOW_STORAGE) ?? 'null') as Flow | null
+    if (!saved) return HOME
+    if (saved.stage === 'processing') return { stage: 'answer', id: saved.id, topic: saved.topic, minutes: saved.minutes, brief: saved.brief }
+    return saved
   } catch {
-    return DEFAULT_SETTINGS
+    return HOME
   }
 }
 
+const shareId = (path: string) => /^\/r\/([0-9a-f-]{36})\/?$/i.exec(path)?.[1] ?? null
+
 export default function App() {
-  const [settings, setSettings] = useState(loadSettings)
-  const [showSettings, setShowSettings] = useState(!settings.key)
-  const [stage, setStage] = useState<Stage>('topic')
-  const [topic, setTopic] = useState('')
-  const [minutes, setMinutes] = useState(20)
-  const [brief, setBrief] = useState<Brief | null>(null)
-  const [studyStart, setStudyStart] = useState(0)
-  const [studied, setStudied] = useState(0)
-  const [transcript, setTranscript] = useState('')
-  const [grade, setGrade] = useState<Grade | null>(null)
-  const [busy, setBusy] = useState('')
+  const [path, setPath] = useState(location.pathname)
+  const [flow, setFlow] = useState<Flow>(loadFlow)
+  const [key, setKeyState] = useState(getKey)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pastSessions, setPastSessions] = useState<HistoryItem[]>([])
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  function saveSettings(next: Settings) {
-    localStorage.setItem('talksense.settings', JSON.stringify(next))
-    setSettings(next)
-    setShowSettings(false)
+  useEffect(() => localStorage.setItem(FLOW_STORAGE, JSON.stringify(flow)), [flow])
+  useEffect(() => {
+    const onPop = () => setPath(location.pathname)
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  useEffect(() => { if (flow.stage !== 'study') document.title = 'Talksense' }, [flow.stage])
+
+  const refreshHistory = useCallback(() => {
+    api.history().then(setPastSessions).catch(() => { /* history is non-critical; home still works without it */ })
+  }, [])
+  useEffect(refreshHistory, [refreshHistory])
+
+  const go = (next: Flow) => { setError(''); setFlow(next); window.scrollTo({ top: 0 }) }
+  const navigateHome = () => {
+    const midSession = flow.stage === 'study' || flow.stage === 'answer'
+    if (midSession && !window.confirm('Leave this session? Your timer and progress will be lost.')) return
+    history.pushState(null, '', '/')
+    setPath('/')
+    go(HOME)
   }
 
-  async function run<T>(label: string, task: () => Promise<T>): Promise<T | undefined> {
+  async function attempt(task: () => Promise<void>) {
     setError('')
-    setBusy(label)
+    setBusy(true)
     try {
-      return await task()
+      await task()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
-      setBusy('')
+      setBusy(false)
     }
   }
 
-  async function makeBrief() {
-    const t = topic.trim()
-    if (!t) return
-    const b = await run('Working out what you should know…', () =>
-      structured<Brief>(settings.key, settings.chatModel, 'brief', BRIEF_SCHEMA, briefPrompt(t, minutes)),
-    )
-    if (b) { setBrief(b); setStage('brief') }
-  }
+  const createSession = (topic: string, minutes: number) =>
+    attempt(async () => {
+      const { id, brief } = await api.createSession(topic, minutes)
+      go({ stage: 'brief', id, topic, minutes, brief })
+    })
 
-  function finishStudy() {
-    setStudied(Math.max(1, Math.round((Date.now() - studyStart) / 60000)))
-    document.title = '⏰ Your turn: Talksense'
-    setStage('answer')
-  }
+  const startTimer = (s: Session) =>
+    attempt(async () => {
+      await api.start(s.id)
+      go({ stage: 'study', ...session(s), startedAt: Date.now() })
+    })
 
-  async function rate(text: string) {
-    if (wordCount(text) < MIN_ANSWER_WORDS) {
-      setError(`That was only ${wordCount(text)} words. Explain in more detail (at least ${MIN_ANSWER_WORDS}) and try again.`)
-      setStage('answer')
-      return
+  async function submit(s: Session, getTranscript: () => Promise<{ transcript: string }>) {
+    go({ stage: 'processing', ...session(s), step: 'transcribing', transcript: '' })
+    try {
+      const { transcript } = await getTranscript()
+      setFlow({ stage: 'processing', ...session(s), step: 'grading', transcript })
+      const result = await api.grade(s.id)
+      go({ stage: 'result', result, transcript })
+      refreshHistory()
+    } catch (e) {
+      setFlow({ stage: 'answer', ...session(s) })
+      setError(e instanceof Error ? e.message : 'Something went wrong.')
     }
-    setTranscript(text)
-    const g = await run('Rating your understanding…', () =>
-      structured<Grade>(settings.key, settings.chatModel, 'grade', GRADE_SCHEMA, gradePrompt(topic, brief!, text)),
-    )
-    setStage(g ? 'result' : 'answer')
-    if (g) setGrade(g)
   }
 
-  async function onAudio(audio: Blob) {
-    setStage('working')
-    const text = await run('Transcribing what you said…', () => transcribe(settings.key, settings.transcribeModel, audio))
-    if (text === undefined) return setStage('answer')
-    await rate(text)
-  }
-
-  function restart() {
-    document.title = 'Talksense'
-    setStage('topic'); setBrief(null); setGrade(null); setTranscript(''); setError('')
-  }
-
-  if (showSettings) return <SettingsForm initial={settings} onSave={saveSettings} />
+  const saveKey = (next: string) => { setKey(next); setKeyState(next); setSettingsOpen(false) }
+  const streak = statsFor(pastSessions).streak
+  const viewingShare = shareId(path)
 
   return (
-    <main>
-      <header className="row between">
-        <h1 onClick={restart}>Talksense</h1>
-        <button className="ghost" onClick={() => setShowSettings(true)}>Settings</button>
+    <div className="shell">
+      {busy && <ProgressLine />}
+      <header className="topbar">
+        <button className="wordmark" onClick={navigateHome} aria-label="Talksense home">
+          <motion.span className="dot" animate={{ scale: [1, 1.35, 1] }} transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }} />
+          talksense
+        </button>
+        <div className="topbar-right">
+          <AnimatePresence>
+            {streak > 0 && (
+              <motion.span className="kicker" style={{ color: 'var(--signal)', marginRight: 8 }} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={spring}>
+                {streak}-day streak
+              </motion.span>
+            )}
+          </AnimatePresence>
+          <Button variant="quiet" onClick={() => setSettingsOpen(true)}>
+            <span style={{ width: 7, height: 7, borderRadius: 9, background: key ? 'var(--good)' : 'var(--bad)' }} aria-hidden />
+            API key
+          </Button>
+        </div>
       </header>
 
-      {error && <p className="error" role="alert">{error}</p>}
-      {busy && <p className="busy" aria-live="polite">{busy}</p>}
+      <AnimatePresence mode="wait">
+        {viewingShare ? (
+          <SharedResult key={`share-${viewingShare}`} id={viewingShare} isOwner={pastSessions.some((h) => h.id === viewingShare)} onNewTopic={navigateHome} />
+        ) : (
+          <motion.div key={flow.stage} style={{ display: 'contents' }}>
+            {error && flow.stage !== 'answer' && <div style={{ marginTop: 16 }}><Banner message={error} /></div>}
+            {flow.stage === 'home' && (
+              <Home hasKey={!!key} busy={busy} history={pastSessions} onStart={createSession} onOpenSettings={() => setSettingsOpen(true)} />
+            )}
+            {flow.stage === 'brief' && (
+              <BriefScreen {...flow} busy={busy} onStart={() => startTimer(flow)} onBack={() => go(HOME)} />
+            )}
+            {flow.stage === 'study' && (
+              <Study topic={flow.topic} minutes={flow.minutes} startedAt={flow.startedAt} objectives={flow.brief.objectives}
+                onDone={() => go({ stage: 'answer', ...session(flow) })} />
+            )}
+            {flow.stage === 'answer' && (
+              <Answer topic={flow.topic} objectives={flow.brief.objectives} error={error}
+                onAudio={(audio) => submit(flow, () => api.transcribeAudio(flow.id, audio))}
+                onText={(text) => submit(flow, () => api.submitText(flow.id, text))} />
+            )}
+            {flow.stage === 'processing' && <Processing step={flow.step} transcript={flow.transcript} />}
+            {flow.stage === 'result' && (
+              <Result result={flow.result} transcript={flow.transcript} isOwner onNewTopic={() => go(HOME)} />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {stage === 'topic' && (
-        <section className="stack">
-          <label htmlFor="topic">What do you want to understand?</label>
-          <input id="topic" value={topic} maxLength={120} placeholder="e.g. How sourdough fermentation works"
-            onChange={(e) => setTopic(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && makeBrief()} />
-          <p>How long will you study?</p>
-          <div className="row">
-            {DURATIONS.map((m) => (
-              <button key={m} className={m === minutes ? '' : 'ghost'} aria-pressed={m === minutes} onClick={() => setMinutes(m)}>
-                {m} min
-              </button>
-            ))}
-          </div>
-          <button onClick={makeBrief} disabled={!topic.trim() || !!busy}>Show me what I should know</button>
-        </section>
-      )}
-
-      {stage === 'brief' && brief && (
-        <section className="stack">
-          <h2>{topic}</h2>
-          <p>In {minutes} minutes, read or watch anything you like. When you come back, explain it out loud. We'll check that you can:</p>
-          <ol>{brief.objectives.map((o) => <li key={o}>{o}</li>)}</ol>
-          <p><strong>Key terms:</strong> {brief.keyTerms.join(' · ')}</p>
-          <p><strong>Places to start:</strong></p>
-          <ul>
-            {brief.searchQueries.map((q) => (
-              <li key={q}>
-                {q}: <a href={`https://www.google.com/search?q=${encodeURIComponent(q)}`} target="_blank" rel="noreferrer">Google</a>
-                {' · '}<a href={`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`} target="_blank" rel="noreferrer">YouTube</a>
-              </li>
-            ))}
-          </ul>
-          <button onClick={() => { setStudyStart(Date.now()); setStage('study') }}>Start {minutes}-minute timer</button>
-        </section>
-      )}
-
-      {stage === 'study' && <Timer endAt={studyStart + minutes * 60000} onDone={finishStudy} />}
-
-      {stage === 'answer' && (
-        <section className="stack">
-          <h2>Explain “{topic}” in your own words</h2>
-          <p>Cover the objectives below. Pretend you're teaching a friend.</p>
-          <ol>{brief?.objectives.map((o) => <li key={o}>{o}</li>)}</ol>
-          <Answer onAudio={onAudio} onText={(t) => { setStage('working'); rate(t) }} />
-        </section>
-      )}
-
-      {stage === 'result' && grade && (
-        <Result topic={topic} minutes={studied} grade={grade} transcript={transcript} onRestart={restart} />
-      )}
-    </main>
+      <AnimatePresence>
+        {settingsOpen && <Settings initialKey={key} onSave={saveKey} onClose={() => setSettingsOpen(false)} />}
+      </AnimatePresence>
+    </div>
   )
 }
 
-function Timer({ endAt, onDone }: { endAt: number; onDone: () => void }) {
-  const [now, setNow] = useState(Date.now())
-  const left = Math.max(0, endAt - now)
+const session = ({ id, topic, minutes, brief }: Session): Session => ({ id, topic, minutes, brief })
+
+function SharedResult({ id, isOwner, onNewTopic }: { id: string; isOwner: boolean; onNewTopic: () => void }) {
+  const [result, setResult] = useState<PublicResult | null>(null)
+  const [error, setError] = useState('')
+
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [])
-  useEffect(() => { if (left === 0) onDone() }, [left === 0]) // eslint-disable-line react-hooks/exhaustive-deps
-  const mmss = `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}`
-  useEffect(() => { document.title = `${mmss} · Talksense` }, [mmss])
-  return (
-    <section className="stack center">
-      <p className="clock" role="timer">{mmss}</p>
-      <p>Go learn. This tab will flip to “Your turn” when time is up.</p>
-      <button className="ghost" onClick={onDone}>I'm ready early</button>
-    </section>
-  )
-}
+    api.result(id).then(setResult).catch((e) => setError(e instanceof Error ? e.message : 'Could not load this result.'))
+  }, [id])
 
-function Result({ topic, minutes, grade, transcript, onRestart }: {
-  topic: string; minutes: number; grade: Grade; transcript: string; onRestart: () => void
-}) {
-  const score = totalScore(grade.dimensions)
-  const text = shareText(topic, score, minutes)
-  const icon = { covered: '✅', partial: '🟡', missed: '❌' }
+  if (result) return <Result result={result} isOwner={isOwner} onNewTopic={onNewTopic} />
   return (
-    <section className="stack">
-      <div className="score">
-        <span className="big">{score}</span>/100 · <strong>{levelFor(score)}</strong>
-      </div>
-      <p>{grade.summary}</p>
-      <table>
-        <tbody>
-          {DIMENSIONS.map((d) => (
-            <tr key={d.id}>
-              <th>{d.label} <small>({Math.round(d.weight * 100)}%)</small></th>
-              <td>{grade.dimensions[d.id].score}/4</td>
-              <td>{grade.dimensions[d.id].reason}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <h3>Objectives</h3>
-      <ul className="plain">
-        {grade.objectives.map((o) => (
-          <li key={o.objective}>{icon[o.status]} {o.objective}{o.evidence && <small> “{o.evidence}”</small>}</li>
-        ))}
-      </ul>
-      {grade.misconceptions.length > 0 && (<><h3>Misconceptions</h3><ul>{grade.misconceptions.map((m) => <li key={m}>{m}</li>)}</ul></>)}
-      <h3>Next steps</h3>
-      <ul>{grade.nextSteps.map((s) => <li key={s}>{s}</li>)}</ul>
-      <div className="row">
-        <a className="btn" target="_blank" rel="noreferrer" href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}`}>Share on X</a>
-        <a className="btn" target="_blank" rel="noreferrer" href={`https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`}>Share on LinkedIn</a>
-        <button className="ghost" onClick={onRestart}>New topic</button>
-      </div>
-      <details><summary>What we heard</summary><p>{transcript}</p></details>
-    </section>
-  )
-}
-
-function SettingsForm({ initial, onSave }: { initial: Settings; onSave: (s: Settings) => void }) {
-  const [s, setS] = useState(initial)
-  const valid = s.key.trim().startsWith('sk-') && s.chatModel.trim() && s.transcribeModel.trim()
-  return (
-    <main className="stack">
-      <h1>Talksense settings</h1>
-      <p>Bring your own OpenAI key. It stays in this browser's local storage and is sent only to api.openai.com.</p>
-      <label htmlFor="key">OpenAI API key</label>
-      <input id="key" type="password" autoComplete="off" value={s.key} onChange={(e) => setS({ ...s, key: e.target.value.trim() })} />
-      <label htmlFor="chat">Model for briefs & rating</label>
-      <input id="chat" value={s.chatModel} onChange={(e) => setS({ ...s, chatModel: e.target.value.trim() })} />
-      <label htmlFor="stt">Transcription model (Whisper)</label>
-      <input id="stt" value={s.transcribeModel} onChange={(e) => setS({ ...s, transcribeModel: e.target.value.trim() })} />
-      <button disabled={!valid} onClick={() => onSave(s)}>Save</button>
-    </main>
+    <Screen>
+      {error ? (
+        <div className="stack">
+          <Banner message={error} />
+          <div><Button variant="signal" onClick={onNewTopic}>Start your own</Button></div>
+        </div>
+      ) : (
+        <ProgressLine />
+      )}
+    </Screen>
   )
 }
