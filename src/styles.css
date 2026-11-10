@@ -1,49 +1,70 @@
-/* ---------- tokens ---------- */
+/* ---------- tokens ----------
+   "The Oral Exam": ivory paper, ink, a vermilion marking pen, and a highlighter used only for evidence.
+   Every text pairing is >= 4.5:1 (WCAG AA) in both themes; see docs/design.md. */
 :root {
-  --paper: #f3f0e8;
-  --paper-2: #ebe7dc;
-  --card: #faf8f3;
+  --paper: #f3efe6;
+  --paper-2: #ebe6da;
+  --card: #fbf9f4;
   --ink: #161513;
-  --ink-2: #4a4740;
-  --muted: #8a857a;
-  --line: #d9d3c5;
-  --signal: #ea580c;
-  --signal-ink: #fff;
-  --signal-soft: #fbe3d4;
-  --good: #3f7d4e;
-  --mid: #c08417;
-  --bad: #b8432f;
+  --ink-2: #45423b;
+  --muted: #6b665c;
+  --line: #d9d2c3;
+  --line-strong: #b9b1a1;
+  --signal: #b8400e;        /* marking pen: CTAs, examiner marks, stamps */
+  --signal-ink: #fff;       /* text on --signal */
+  --signal-soft: #f6dccb;
+  --hl: #f6e27a;            /* highlighter: evidence quoted from the learner, nothing else */
+  --good: #2f6b3f;
+  --mid: #8a5a00;           /* warning / partly covered */
+  --bad: #a8321f;
   --shadow: 0 1px 0 #fff8 inset, 0 1px 2px #1615130d, 0 8px 24px -12px #1615132e;
+  --shadow-lift: 0 1px 0 #fff8 inset, 0 2px 4px #16151310, 0 24px 48px -24px #16151340;
 
   --serif: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
   --sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
   --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
+  /* spacing scale (4px base) */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px; --s8: 64px; --s9: 96px; --s10: 144px;
+  --radius-sm: 8px; --radius: 14px; --radius-lg: 20px;
+  --reading: 760px;         /* in-session column */
+  --wide: 1120px;           /* home, dashboard, share */
+
+  /* motion: short for feedback, base for state changes, slow for reveals */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 150ms; --dur-base: 250ms; --dur-slow: 500ms;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #121110;
     --paper-2: #1a1917;
-    --card: #1c1b19;
-    --ink: #ede9e0;
-    --ink-2: #bdb7aa;
-    --muted: #7d786d;
+    --card: #1b1a18;
+    --ink: #eeeae1;
+    --ink-2: #c3bdb1;
+    --muted: #9a9488;
     --line: #2f2d29;
-    --signal: #f26a1f;
+    --line-strong: #4a4640;
+    --signal: #f07a3e;
+    --signal-ink: #121110;
     --signal-soft: #3a2316;
-    --good: #6fae7e;
-    --mid: #ddA437;
-    --bad: #e0705c;
+    --hl: #5c4f12;
+    --good: #7fbf8e;
+    --mid: #e0b04a;
+    --bad: #ee8a76;
     --shadow: 0 1px 0 #ffffff08 inset, 0 8px 24px -12px #000a;
+    --shadow-lift: 0 1px 0 #ffffff0a inset, 0 24px 48px -24px #000c;
     color-scheme: dark;
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
 
 /* ---------- base ---------- */
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+html { scroll-behavior: smooth; scroll-padding-top: 24px; }
 body {
   margin: 0;
   background: var(--paper);
@@ -70,7 +91,7 @@ button { font: inherit; color: inherit; }
 h1, h2, h3 { font-weight: 400; margin: 0; }
 
 /* ---------- layout ---------- */
-.shell { max-width: 760px; margin: 0 auto; padding: 0 20px 96px; min-height: 100dvh; display: flex; flex-direction: column; }
+.shell { max-width: var(--reading); margin: 0 auto; padding: 0 20px 96px; min-height: 100dvh; display: flex; flex-direction: column; }
 .topbar { display: flex; align-items: center; justify-content: space-between; height: 72px; }
 .wordmark { font: italic 400 28px/1 var(--serif); letter-spacing: -0.01em; background: none; border: 0; padding: 0; cursor: pointer; display: flex; align-items: center; gap: 10px; }
 .wordmark .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--signal); }
@@ -125,20 +146,7 @@ h1, h2, h3 { font-weight: 400; margin: 0; }
 .segmented span { position: relative; z-index: 1; }
 
 .panel { background: var(--card); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
-.keycard { padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.stat { padding: 18px 0 16px; }
-.stat + .stat { border-left: 1px solid var(--line); padding-left: 18px; }
-.stat b { display: block; font: 400 40px/1 var(--serif); letter-spacing: -0.02em; margin-top: 8px; }
-.history { list-style: none; margin: 0; padding: 0; }
-.history a { display: grid; grid-template-columns: 1fr 120px 44px; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--line); text-decoration: none; }
-.history a:hover { color: var(--ink); }
-.history a:hover .h-topic { color: var(--signal); }
-.h-topic { font: 400 22px/1.2 var(--serif); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: color .2s; }
-.h-bar { height: 4px; background: var(--line); border-radius: 4px; overflow: hidden; }
-.h-bar > div { height: 100%; background: var(--ink); border-radius: 4px; }
-.h-score { font: 500 15px var(--mono); text-align: right; }
 
 /* ---------- brief ticket ---------- */
 .ticket { position: relative; padding: 28px 28px 24px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
@@ -155,7 +163,7 @@ h1, h2, h3 { font-weight: 400; margin: 0; }
 .resources li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
 .resources li:last-child { border-bottom: 0; }
 .resources span { color: var(--ink-2); }
-.resources .links { display: flex; gap: 14px; font: 12px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; flex-shrink: 0; }
+.resources .links { display: flex; gap: 4px; font: 12px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; flex-shrink: 0; }
 
 /* ---------- dial ---------- */
 .dial-wrap { position: relative; width: min(360px, 82vw); aspect-ratio: 1; margin: 8px auto 0; }
@@ -226,13 +234,8 @@ details.transcript p { color: var(--ink-2); }
 .fine { font-size: 13px; color: var(--muted); line-height: 1.5; }
 
 @media (max-width: 600px) {
-  .stats { grid-template-columns: repeat(2, 1fr); }
-  .stat:nth-child(3) { border-left: 0; padding-left: 0; }
-  .stat:nth-child(n + 3) { border-top: 1px solid var(--line); }
   .rubric-row { grid-template-columns: 1fr 110px; }
   .rubric-row p { grid-column: 1 / -1; }
-  .history a { grid-template-columns: 1fr 44px; }
-  .h-bar { display: none; }
   .ticket { padding: 22px 20px 20px; }
   .ticket-cut { margin: 20px -20px; }
 }
@@ -249,6 +252,12 @@ details.transcript p { color: var(--ink-2); }
 .chip span:last-child { position: relative; }
 .topic-field input[readonly] { color: var(--signal); }
 @media (max-width: 600px) {
-  .chips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -20px; padding: 0 20px; scrollbar-width: none; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .chip { flex-shrink: 0; }
 }
+
+/* ---------- touch targets ---------- */
+/* Small inline links keep their look but get a >= 32px hit area (WCAG 2.5.8 asks for 24px). */
+.resources .links a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 8px; border-radius: var(--radius-sm); }
+.resources .links a:hover { background: var(--paper-2); }
+.fine a { display: inline-block; padding: 6px 2px; margin: -6px 0; }
