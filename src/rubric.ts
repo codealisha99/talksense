@@ -179,4 +179,7 @@ export type PublicResult = {
   gradedAt: string
 }
 
-export type HistoryItem = Pick<PublicResult, 'id' | 'topic' | 'minutes' | 'score' | 'level' | 'gradedAt'>
+export type HistoryItem = Pick<PublicResult, 'id' | 'topic' | 'minutes' | 'score' | 'level' | 'gradedAt'> & {
+  /** Rubric part scores (0-4) for this session, for the learner's own skill profile. */
+  dimensions: Record<DimensionId, number>
+}

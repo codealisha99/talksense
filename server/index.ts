@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { migrate, sql } from './db.ts'
 import { structured, transcribe, UpstreamError } from './openai.ts'
 import {
-  BRIEF_SCHEMA, DURATIONS, GRADE_SCHEMA, MAX_TOPIC_LENGTH, MIN_ANSWER_WORDS, briefPrompt, gradePrompt,
+  BRIEF_SCHEMA, DIMENSIONS, DURATIONS, GRADE_SCHEMA, MAX_TOPIC_LENGTH, MIN_ANSWER_WORDS, briefPrompt, gradePrompt,
   levelFor, studiedMinutes, totalScore, wordCount, type Brief, type Grade, type HistoryItem, type PublicResult,
 } from '../src/rubric.ts'
 import { shareCardSvg } from './shareCard.ts'
@@ -209,11 +209,12 @@ api.get('/results/:id', async (c) => {
 api.get('/devices/:deviceId/history', async (c) => {
   const deviceId = uuid.parse(c.req.param('deviceId'))
   const rows = await sql`
-    SELECT id, topic, minutes, score, level, graded_at FROM sessions
+    SELECT id, topic, minutes, score, level, graded_at, grade->'dimensions' AS dimensions FROM sessions
     WHERE device_id = ${deviceId} AND grade IS NOT NULL
     ORDER BY graded_at DESC LIMIT 200`
   const data: HistoryItem[] = rows.map((r) => ({
     id: r.id, topic: r.topic, minutes: r.minutes, score: r.score, level: r.level, gradedAt: new Date(r.graded_at).toISOString(),
+    dimensions: Object.fromEntries(DIMENSIONS.map((d) => [d.id, Number(r.dimensions?.[d.id]?.score ?? 0)])) as HistoryItem['dimensions'],
   }))
   return c.json({ data })
 })

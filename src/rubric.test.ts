@@ -40,3 +40,10 @@ test('studied minutes are measured from start but never exceed the chosen study 
   assert.equal(studiedMinutes(start, start + 10_000, 20), 1) // at least one minute
   assert.equal(studiedMinutes(null, start, 20), null) // timer never started
 })
+
+test('every rubric part documents what 0, 2 and 4 mean (the landing page and grader both use these)', () => {
+  for (const d of DIMENSIONS) {
+    const marks = d.anchors.split(';').map((p) => p.split('=')[0].trim())
+    assert.deepEqual(marks, ['0', '2', '4'], `${d.id} anchors`)
+  }
+})
