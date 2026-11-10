@@ -35,6 +35,12 @@ export function wrap(text: string, maxChars: number, maxLines: number): string[]
   return kept
 }
 
+// Geist Mono at 22px advances ~13.2px per glyph, plus 5px letter-spacing.
+const STAMP_CHAR_W = 18.2
+const STAMP_PADDING = 44
+const STAMP_CX = 900
+export const stampWidth = (level: string) => Math.round(level.length * STAMP_CHAR_W + STAMP_PADDING)
+
 type CardInput = Pick<PublicResult, 'topic' | 'score' | 'level' | 'minutes' | 'studiedMinutes'> & {
   dimensions: Record<string, { score: number }>
 }
@@ -56,6 +62,7 @@ export function shareCardSvg(r: CardInput): string {
   }).join('')
 
   const minutes = r.studiedMinutes ?? r.minutes
+  const stampW = stampWidth(r.level)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">
   <rect width="${CARD_W}" height="${CARD_H}" fill="${PAPER}"/>
   <rect x="24" y="24" width="${CARD_W - 48}" height="${CARD_H - 48}" rx="28" fill="${CARD}" stroke="${LINE}" stroke-width="1.5"/>
@@ -67,10 +74,10 @@ export function shareCardSvg(r: CardInput): string {
   ${bars}
   <text x="1110" y="470" text-anchor="end" font-family="Instrument Serif" font-size="300" letter-spacing="-12" fill="${INK}">${r.score}</text>
   <text x="1112" y="530" text-anchor="end" font-family="Geist Mono" font-size="18" fill="${MUTED}">/100</text>
-  <g transform="rotate(-5 900 548)">
-    <rect x="${900 - 100}" y="522" width="200" height="52" rx="7" fill="none" stroke="${SIGNAL}" stroke-width="2.5"/>
-    <rect x="${900 - 106}" y="516" width="212" height="64" rx="10" fill="none" stroke="${SIGNAL}" stroke-width="1.5"/>
-    <text x="900" y="557" text-anchor="middle" font-family="Geist Mono" font-weight="600" font-size="22" letter-spacing="5" fill="${SIGNAL}">${escapeXml(r.level.toUpperCase())}</text>
+  <g transform="rotate(-5 ${STAMP_CX} 548)">
+    <rect x="${STAMP_CX - stampW / 2}" y="522" width="${stampW}" height="52" rx="7" fill="none" stroke="${SIGNAL}" stroke-width="2.5"/>
+    <rect x="${STAMP_CX - stampW / 2 - 6}" y="516" width="${stampW + 12}" height="64" rx="10" fill="none" stroke="${SIGNAL}" stroke-width="1.5"/>
+    <text x="${STAMP_CX}" y="557" text-anchor="middle" font-family="Geist Mono" font-weight="600" font-size="22" letter-spacing="5" fill="${SIGNAL}">${escapeXml(r.level.toUpperCase())}</text>
   </g>
 </svg>`
 }

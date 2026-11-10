@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { escapeXml, shareCardSvg, wrap } from './shareCard.ts'
+import { LEVELS } from '../src/rubric.ts'
+import { CARD_W, escapeXml, shareCardSvg, stampWidth, wrap } from './shareCard.ts'
 
 test('wrap respects the character budget and line limit', () => {
   assert.deepEqual(wrap('one two three four', 9, 3), ['one two', 'three', 'four'])
@@ -20,4 +21,12 @@ test('escapes user text so the SVG cannot be broken or injected into', () => {
   assert.ok(!svg.includes('<script>'))
   assert.ok(svg.includes('>76<'))
   assert.ok(svg.includes('STUDIED 18 MIN'))
+})
+
+test('every level name fits inside its stamp and the stamp stays on the card', () => {
+  for (const { name } of LEVELS) {
+    const w = stampWidth(name)
+    assert.ok(w >= name.length * 18 + 30, `${name} overflows its stamp`)
+    assert.ok(900 + w / 2 + 6 < CARD_W - 24, `${name} stamp runs off the card`)
+  }
 })
