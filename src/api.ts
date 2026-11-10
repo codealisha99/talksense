@@ -17,6 +17,15 @@ export const getKey = () => localStorage.getItem(KEY_STORAGE) ?? ''
 export const setKey = (key: string) =>
   key ? localStorage.setItem(KEY_STORAGE, key) : localStorage.removeItem(KEY_STORAGE)
 
+/** status 0 = the request never reached the server. */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}, json?: unknown): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('x-openai-key', getKey())
@@ -25,10 +34,10 @@ async function request<T>(path: string, init: RequestInit = {}, json?: unknown):
   try {
     res = await fetch(`/api${path}`, { ...init, headers, body: json !== undefined ? JSON.stringify(json) : init.body })
   } catch {
-    throw new Error("Can't reach Talksense. Check your connection and try again.")
+    throw new ApiError("Can't reach Talksense. Check your connection and try again.", 0)
   }
   const body = await res.json().catch(() => null)
-  if (!res.ok) throw new Error(body?.error ?? `Something went wrong (${res.status}).`)
+  if (!res.ok) throw new ApiError(body?.error ?? `Something went wrong (${res.status}).`, res.status)
   return body.data as T
 }
 

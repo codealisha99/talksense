@@ -5,14 +5,25 @@ import { Arrow, Banner, Button, Screen, item, list, mmss, spring } from './primi
 
 const MAX_RECORD_MS = 10 * 60 * 1000 // keeps uploads well under OpenAI's 25 MB limit
 
-type Props = { topic: string; objectives: string[]; error: string; onAudio: (audio: Blob) => void; onText: (text: string) => void }
+type Props = {
+  topic: string
+  objectives: string[]
+  error: string
+  /** Text the learner typed before a failed submit, restored so it isn't lost. */
+  draft?: string
+  /** True when the server already holds this answer and only the rating needs retrying. */
+  saved?: boolean
+  onRetry?: () => void
+  onAudio: (audio: Blob) => void
+  onText: (text: string) => void
+}
 
-export default function Answer({ topic, objectives, error, onAudio, onText }: Props) {
-  const [mode, setMode] = useState<'voice' | 'text'>('voice')
+export default function Answer({ topic, objectives, error, draft, saved, onRetry, onAudio, onText }: Props) {
+  const [mode, setMode] = useState<'voice' | 'text'>(draft ? 'text' : 'voice')
   const [recording, setRecording] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [micError, setMicError] = useState('')
-  const [typed, setTyped] = useState('')
+  const [typed, setTyped] = useState(draft ?? '')
 
   const recorder = useRef<MediaRecorder | null>(null)
   const canvas = useRef<HTMLCanvasElement | null>(null)
@@ -116,6 +127,14 @@ export default function Answer({ topic, objectives, error, onAudio, onText }: Pr
         </motion.ol>
 
         {(error || micError) && <Banner message={micError || error} />}
+        {onRetry && !micError && (
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span className="fine">
+              {saved ? 'Your explanation is saved. Only the rating needs to run again.' : 'Your recording is kept. You can send it again.'}
+            </span>
+            <Button variant="signal" onClick={onRetry}>{saved ? 'Retry rating' : 'Send again'} <Arrow /></Button>
+          </div>
+        )}
 
         <AnimatePresence mode="wait" initial={false}>
           {mode === 'voice' ? (

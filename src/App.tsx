@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useCallback, useEffect, useState } from 'react'
-import { api, getKey, setKey } from './api.ts'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ApiError, api, getKey, setKey } from './api.ts'
 import { statsFor } from './progress.ts'
 import type { Brief, HistoryItem, PublicResult } from './rubric.ts'
 import Answer from './ui/Answer.tsx'
@@ -17,7 +17,8 @@ type Flow =
   | { stage: 'home' }
   | ({ stage: 'brief' } & Session)
   | ({ stage: 'study'; startedAt: number } & Session)
-  | ({ stage: 'answer' } & Session)
+  // draft: typed text to restore after a failure; transcript: saved on the server, only grading is pending.
+  | ({ stage: 'answer'; draft?: string; transcript?: string } & Session)
   | ({ stage: 'processing'; step: Step; transcript: string } & Session)
   | { stage: 'result'; result: PublicResult; transcript: string }
 
@@ -29,12 +30,20 @@ function loadFlow(): Flow {
   try {
     const saved = JSON.parse(localStorage.getItem(FLOW_STORAGE) ?? 'null') as Flow | null
     if (!saved) return HOME
-    if (saved.stage === 'processing') return { stage: 'answer', id: saved.id, topic: saved.topic, minutes: saved.minutes, brief: saved.brief }
+    if (saved.stage === 'processing') {
+      const transcript = saved.step === 'grading' ? saved.transcript : undefined
+      return { stage: 'answer', ...session(saved), transcript }
+    }
     return saved
   } catch {
     return HOME
   }
 }
+
+// Resending the same input can't succeed: it must change (400/413/422) or the session is gone or done (404/409).
+const NEEDS_NEW_INPUT = new Set([400, 404, 409, 413, 422])
+
+type Answer = { audio: Blob } | { text: string } | { transcript: string }
 
 const shareId = (path: string) => /^\/r\/([0-9a-f-]{36})\/?$/i.exec(path)?.[1] ?? null
 
@@ -46,6 +55,7 @@ export default function App() {
   const [pastSessions, setPastSessions] = useState<HistoryItem[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const pendingAudio = useRef<Blob | null>(null) // a recording whose upload failed for a transient reason
 
   useEffect(() => localStorage.setItem(FLOW_STORAGE, JSON.stringify(flow)), [flow])
   useEffect(() => {
@@ -93,18 +103,34 @@ export default function App() {
       go({ stage: 'study', ...session(s), startedAt: Date.now() })
     })
 
-  async function submit(s: Session, getTranscript: () => Promise<{ transcript: string }>) {
-    go({ stage: 'processing', ...session(s), step: 'transcribing', transcript: '' })
+  /** Transcribe (unless already saved), then grade. On failure, keep whatever work survived so it can be retried. */
+  async function submit(s: Session, input: Answer) {
+    let transcript = 'transcript' in input ? input.transcript : undefined
+    go({ stage: 'processing', ...session(s), step: transcript === undefined ? 'transcribing' : 'grading', transcript: transcript ?? '' })
     try {
-      const { transcript } = await getTranscript()
-      setFlow({ stage: 'processing', ...session(s), step: 'grading', transcript })
+      if (!('transcript' in input)) {
+        const saved = 'audio' in input ? await api.transcribeAudio(s.id, input.audio) : await api.submitText(s.id, input.text)
+        transcript = saved.transcript
+        setFlow({ stage: 'processing', ...session(s), step: 'grading', transcript })
+      }
       const result = await api.grade(s.id)
-      go({ stage: 'result', result, transcript })
+      pendingAudio.current = null
+      go({ stage: 'result', result, transcript: transcript ?? '' }) // always set by this point
       refreshHistory()
     } catch (e) {
-      setFlow({ stage: 'answer', ...session(s) })
+      const status = e instanceof ApiError ? e.status : 0
+      const resendable = transcript === undefined && 'audio' in input && !NEEDS_NEW_INPUT.has(status)
+      pendingAudio.current = resendable ? input.audio : null
+      setFlow({ stage: 'answer', ...session(s), draft: 'text' in input ? input.text : undefined, transcript })
       setError(e instanceof Error ? e.message : 'Something went wrong.')
     }
+  }
+
+  const retryFor = (f: Extract<Flow, { stage: 'answer' }>) => {
+    const saved = f.transcript
+    if (saved !== undefined) return () => submit(f, { transcript: saved })
+    const audio = pendingAudio.current
+    return audio ? () => submit(f, { audio }) : undefined
   }
 
   const saveKey = (next: string) => { setKey(next); setKeyState(next); setSettingsOpen(false) }
@@ -152,8 +178,9 @@ export default function App() {
             )}
             {flow.stage === 'answer' && (
               <Answer topic={flow.topic} objectives={flow.brief.objectives} error={error}
-                onAudio={(audio) => submit(flow, () => api.transcribeAudio(flow.id, audio))}
-                onText={(text) => submit(flow, () => api.submitText(flow.id, text))} />
+                draft={flow.draft} saved={flow.transcript !== undefined} onRetry={retryFor(flow)}
+                onAudio={(audio) => submit(flow, { audio })}
+                onText={(text) => submit(flow, { text })} />
             )}
             {flow.stage === 'processing' && <Processing step={flow.step} transcript={flow.transcript} />}
             {flow.stage === 'result' && (
