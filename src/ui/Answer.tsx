@@ -28,6 +28,7 @@ export default function Answer({ topic, objectives, error, draft, saved, onRetry
   const recorder = useRef<MediaRecorder | null>(null)
   const canvas = useRef<HTMLCanvasElement | null>(null)
   const teardown = useRef<() => void>(() => {})
+  const starting = useRef(false) // blocks a second start while the mic permission prompt is open
   const level = useMotionValue(0)
   const smooth = useSpring(level, { stiffness: 300, damping: 20 })
   const haloScale = useTransform(smooth, [0, 1], [1, 1.32])
@@ -35,6 +36,8 @@ export default function Answer({ topic, objectives, error, draft, saved, onRetry
   useEffect(() => () => teardown.current(), [])
 
   async function start() {
+    if (starting.current) return
+    starting.current = true
     setMicError('')
     let stream: MediaStream
     try {
@@ -42,6 +45,8 @@ export default function Answer({ topic, objectives, error, draft, saved, onRetry
     } catch {
       setMicError('Microphone is blocked or unavailable. Allow access in your browser, or type your explanation instead.')
       return
+    } finally {
+      starting.current = false
     }
 
     const audioCtx = new AudioContext()
