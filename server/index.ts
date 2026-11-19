@@ -8,13 +8,19 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { getConnInfo } from '@hono/node-server/conninfo'
 import { z } from 'zod'
 import { migrate, sql } from './db.ts'
-import { structured, transcribe, UpstreamError } from './openai.ts'
+import { structured, transcribe, transcribeVerbose, UpstreamError } from './openai.ts'
 import {
   BRIEF_SCHEMA, DIMENSIONS, DURATIONS, GRADE_SCHEMA, MAX_TOPIC_LENGTH, MIN_ANSWER_WORDS, briefPrompt, gradePrompt,
   levelFor, studiedMinutes, totalScore, wordCount, type Brief, type Grade, type HistoryItem, type PublicResult,
 } from '../src/rubric.ts'
 import { shareCardSvg } from './shareCard.ts'
 import { NICHES, RANDOM_TOPIC_SCHEMA, randomTopicPrompt, type RandomTopic } from '../src/topics.ts'
+import { LocalAudioStorageProvider } from './speech/audio/localStorage.ts'
+import { sniffAudioFormat } from './speech/audio/formatSniffer.ts'
+import { AudioRetentionManager } from './speech/audio/retention.ts'
+import { TranscriptionNormalizer } from './speech/transcription/normalizer.ts'
+import { SpeechAnalysisPipeline } from './speech/pipeline.ts'
+import type { SpeechReport } from '../src/speech.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const CHAT_MODEL = process.env.CHAT_MODEL ?? 'gpt-6-astra'
@@ -86,6 +92,10 @@ async function ownedSession(id: string, deviceId: string): Promise<Row> {
   return row
 }
 
+const audioStorage = new LocalAudioStorageProvider()
+const retentionManager = new AudioRetentionManager(audioStorage)
+const speechPipeline = new SpeechAnalysisPipeline()
+
 function toPublic(row: Row): PublicResult {
   return {
     id: row.id,
@@ -96,6 +106,7 @@ function toPublic(row: Row): PublicResult {
     level: row.level,
     grade: row.grade,
     gradedAt: new Date(row.graded_at).toISOString(),
+    speechReport: row.speech_report ?? null,
   }
 }
 
@@ -148,11 +159,13 @@ api.post('/sessions/:id/start', async (c) => {
   return c.json({ data: { startedAt: new Date(row.started_at).toISOString() } })
 })
 
-// Step 1: audio (multipart) or typed text (JSON) -> stored transcript.
+// Step 1: audio (multipart) or typed text (JSON) -> stored transcript & speech intelligence report.
 api.post('/sessions/:id/transcript', async (c) => {
   const id = idOf(c)
   let deviceId: string
   let transcript: string
+  let speechReport: SpeechReport
+
   if (c.req.header('content-type')?.startsWith('multipart/form-data')) {
     const form = await c.req.parseBody()
     deviceId = deviceBody.parse({ deviceId: form.deviceId }).deviceId
@@ -162,20 +175,117 @@ api.post('/sessions/:id/transcript', async (c) => {
     const key = keyOf(c)
     const session = await ownedSession(id, deviceId)
     if (session.grade) throw new HttpError(409, 'This session has already been rated.')
-    transcript = await transcribe(key, TRANSCRIBE_MODEL, audio)
+
+    // Audio storage & metadata extraction
+    const audioBuffer = Buffer.from(await audio.arrayBuffer())
+    const sniffed = sniffAudioFormat(audioBuffer)
+    const recordingId = crypto.randomUUID()
+    const consent = form.consent !== 'false'
+
+    let storageKey: string | null = null
+    if (consent) {
+      const savedRef = await audioStorage.save(recordingId, id, deviceId, audioBuffer, sniffed.format)
+      storageKey = savedRef.storageKey
+      await sql`
+        INSERT INTO recordings (id, session_id, device_id, storage_key, format, size_bytes, duration_seconds, consent_given)
+        VALUES (${recordingId}, ${id}, ${deviceId}, ${storageKey}, ${sniffed.format}, ${audioBuffer.byteLength}, ${sniffed.durationSeconds || 0}, ${consent})`
+    }
+
+    // High-resolution transcription with word alignment
+    const rawVerbose = await transcribeVerbose(key, TRANSCRIBE_MODEL, audio)
+    const normalized = TranscriptionNormalizer.normalizeWhisper(
+      rawVerbose,
+      'openai-whisper',
+      sniffed.durationSeconds || 0,
+    )
+
+    // Execute modular speech intelligence engine
+    speechReport = await speechPipeline.run(normalized, {
+      sessionId: id,
+      recordingId: storageKey ? recordingId : null,
+      audioBuffer,
+      audioPlayableUrl: storageKey ? audioStorage.getPlaybackUrl(recordingId) : null,
+    })
+
+    transcript = normalized.text
+    const durationSeconds = speechReport.pace.totalDurationSeconds
+
+    await sql`
+      UPDATE sessions
+      SET transcript = ${transcript},
+          speech_report = ${JSON.stringify(speechReport)},
+          recording_id = ${storageKey ? recordingId : null},
+          audio_duration = ${durationSeconds},
+          word_timestamps = ${JSON.stringify(normalized.words)},
+          speech_analyzed_at = now()
+      WHERE id = ${id} AND device_id = ${deviceId} AND grade IS NULL`
   } else {
     const body = textBody.parse(await c.req.json())
     deviceId = body.deviceId
     transcript = body.text.trim()
     const session = await ownedSession(id, deviceId)
     if (session.grade) throw new HttpError(409, 'This session has already been rated.')
+
+    const normalized = TranscriptionNormalizer.fromTextOnly(transcript)
+    speechReport = await speechPipeline.run(normalized, {
+      sessionId: id,
+      recordingId: null,
+      audioBuffer: undefined,
+      audioPlayableUrl: null,
+    })
+
+    await sql`
+      UPDATE sessions
+      SET transcript = ${transcript},
+          speech_report = ${JSON.stringify(speechReport)},
+          speech_analyzed_at = now()
+      WHERE id = ${id} AND device_id = ${deviceId} AND grade IS NULL`
   }
+
   const words = wordCount(transcript)
   if (words < MIN_ANSWER_WORDS) {
     throw new HttpError(422, `We only caught ${words} word${words === 1 ? '' : 's'}. Explain in more detail (at least ${MIN_ANSWER_WORDS}) and try again.`)
   }
-  await sql`UPDATE sessions SET transcript = ${transcript} WHERE id = ${id} AND device_id = ${deviceId} AND grade IS NULL`
-  return c.json({ data: { transcript } })
+
+  return c.json({ data: { transcript, speechReport } })
+})
+
+api.get('/sessions/:id/speech', async (c) => {
+  const [row] = await sql`SELECT speech_report FROM sessions WHERE id = ${idOf(c)}`
+  if (!row || !row.speech_report) throw new HttpError(404, 'Speech analysis report not found.')
+  return c.json({ data: row.speech_report })
+})
+
+api.get('/recordings/:id/audio', async (c) => {
+  const recId = uuid.safeParse(c.req.param('id'))
+  if (!recId.success) throw new HttpError(404, 'Invalid recording id.')
+  const [rec] = await sql`SELECT * FROM recordings WHERE id = ${recId.data} AND deleted_at IS NULL`
+  if (!rec) throw new HttpError(404, 'Audio recording not found or has been deleted.')
+
+  const buffer = await audioStorage.read(rec.storage_key, rec.device_id)
+  const mimeType =
+    rec.format === 'wav' ? 'audio/wav' : rec.format === 'mp4' ? 'audio/mp4' : rec.format === 'ogg' ? 'audio/ogg' : 'audio/webm'
+  return c.body(new Uint8Array(buffer), 200, {
+    'Content-Type': mimeType,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, max-age=3600',
+  })
+})
+
+api.delete('/recordings/:id', async (c) => {
+  const recId = uuid.safeParse(c.req.param('id'))
+  if (!recId.success) throw new HttpError(404, 'Invalid recording id.')
+  const { deviceId } = deviceBody.parse(await c.req.json())
+
+  const [rec] = await sql`SELECT * FROM recordings WHERE id = ${recId.data} AND device_id = ${deviceId} AND deleted_at IS NULL`
+  if (!rec) throw new HttpError(404, 'Recording not found.')
+
+  await retentionManager.deleteRecordingAndDerived(rec.storage_key, deviceId, async () => {
+    await sql`UPDATE recordings SET deleted_at = now() WHERE id = ${recId.data}`
+    await sql`UPDATE sessions SET recording_id = NULL WHERE recording_id = ${recId.data}`
+  })
+
+  return c.json({ data: { deleted: true } })
 })
 
 // Step 2: grade the stored transcript. Score is computed here, so shared results can't be forged by the client.

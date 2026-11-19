@@ -167,6 +167,8 @@ export function shareText(topic: string, score: number, minutes: number): string
   return `I studied "${topic}" for ${minutes} min, then explained it out loud. Talksense scored my understanding ${score}/100 (${levelFor(score)}).`
 }
 
+import type { SpeechReport } from './speech.ts'
+
 /** Public, shareable view of a graded session. Never includes the transcript or device id. */
 export type PublicResult = {
   id: string
@@ -177,6 +179,7 @@ export type PublicResult = {
   level: string
   grade: Grade
   gradedAt: string
+  speechReport?: SpeechReport | null
 }
 
 export type HistoryItem = Pick<PublicResult, 'id' | 'topic' | 'minutes' | 'score' | 'level' | 'gradedAt'> & {
