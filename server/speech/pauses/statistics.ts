@@ -22,7 +22,9 @@ export function computePauseDiagnostics(
     ? Math.max(0, Math.min(1, Math.round(((totalDurationSeconds - totalPauseDuration) / totalDurationSeconds) * 100) / 100))
     : 1.0
 
-  const awkwardPauses = events.filter((e) => e.durationSeconds >= 2.0 && e.category === 'HESITATION_PAUSE')
+  const awkwardPauses = events.filter(
+    (e) => e.durationSeconds >= 2.0 && (e.category === 'HESITATION_PAUSE' || e.category === 'LONG_SILENCE'),
+  )
   const grammaticalPauses = events.filter((e) => e.category === 'GRAMMATICAL_PAUSE')
 
   const sentencePauseRatio = events.length > 0
