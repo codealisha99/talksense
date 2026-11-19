@@ -145,7 +145,7 @@ export class SpeechAnalysisPipeline {
         grammarIssues: [],
         vocabulary: {
           totalWords: words.length,
-          uniqueWords: new Set(words.map((w) => w.text.toLowerCase())).size,
+          uniqueWords: new Set(words.map((w) => (w.text || '').toLowerCase())).size,
           typeTokenRatio: 0,
           movingAverageTTR: 0,
           ttrWindowSize: 50,
