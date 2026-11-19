@@ -74,3 +74,26 @@ test('computePauseDiagnostics evaluates phonation ratio and awkward pauses', () 
   assert.equal(diagnostics.awkwardPauseCount, 1)
   assert.equal(diagnostics.longestHesitation?.category, 'LONG_SILENCE')
 })
+
+test('PauseAnalysisEngine safely ignores negative gaps and overlapping words without corrupting metrics', () => {
+  const engine = new PauseAnalysisEngine()
+
+  const transcript: NormalizedTranscript = {
+    text: 'overlapping speech tokens',
+    language: 'en',
+    durationSeconds: 5.0,
+    provider: 'test',
+    words: [
+      { text: 'overlapping', start: 0.5, end: 1.5, confidence: null },
+      { text: 'speech', start: 1.2, end: 2.0, confidence: null }, // Overlaps! start < prev.end
+      { text: 'tokens', start: 2.0, end: 2.5, confidence: null },  // Zero gap!
+    ],
+  }
+
+  const metrics = engine.analyze(transcript, 5.0)
+
+  // Neither the overlap (-0.3s) nor the zero gap (0.0s) should count as a noticeable pause (threshold: 0.25s)
+  assert.equal(metrics.totalPauses, 0)
+  assert.equal(metrics.totalPauseDurationSeconds, 0)
+  assert.equal(metrics.events.length, 0)
+})
