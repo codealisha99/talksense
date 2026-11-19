@@ -25,3 +25,26 @@ test('a refusal is reported as a refusal', async (t) => {
   t.mock.method(globalThis, 'fetch', reply(message([{ type: 'refusal', refusal: 'I cannot help with that.' }])))
   await assert.rejects(call(), (e) => e instanceof UpstreamError && /declined/i.test(e.message))
 })
+
+test('transcribeVerbose parses word timestamps and duration from verbose_json', async (t) => {
+  const { transcribeVerbose } = await import('./openai.ts')
+  const verboseData = {
+    task: 'transcribe',
+    language: 'english',
+    duration: 5.4,
+    text: 'Hello world',
+    words: [
+      { word: 'Hello', start: 0.1, end: 0.5 },
+      { word: 'world', start: 0.6, end: 1.1 },
+    ],
+  }
+  t.mock.method(globalThis, 'fetch', reply(verboseData))
+  const dummyFile = new File(['dummy'], 'test.webm', { type: 'audio/webm' })
+  const result = await transcribeVerbose('sk-test', 'gpt-transcribe', dummyFile)
+
+  assert.equal(result.text, 'Hello world')
+  assert.equal(result.duration, 5.4)
+  assert.equal(result.words?.length, 2)
+  assert.equal(result.words?.[0].word, 'Hello')
+  assert.equal(result.words?.[1].end, 1.1)
+})
