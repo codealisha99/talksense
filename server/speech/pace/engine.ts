@@ -98,15 +98,26 @@ export class SpeakingPaceEngine {
 
     const segments = this.calculateSegments(words, totalDurationSeconds, 30) // 30-second windows
 
+    // Calculate pace variability across active segments
+    const validWpms = segments.map((s) => s.wpm).filter((w) => w > 0)
+    let paceStdDev = 0
+    if (validWpms.length > 1) {
+      const mean = validWpms.reduce((a, b) => a + b, 0) / validWpms.length
+      const variance = validWpms.reduce((sum, w) => sum + Math.pow(w - mean, 2), 0) / validWpms.length
+      paceStdDev = Math.round(Math.sqrt(variance) * 10) / 10
+    }
+
     const calculationMethod = hasTimestamps
       ? 'ACTIVE_TIME_MINUS_PAUSES'
       : 'TOTAL_DURATION_ESTIMATE'
 
     const confidence = hasTimestamps ? 0.95 : 0.6
 
+    const paceConsistency = paceStdDev < 20 ? 'consistent' : paceStdDev < 40 ? 'moderate variation' : 'erratic pace'
+
     const evidence = `Detected ${wordCount} words across ${totalDurationSeconds.toFixed(1)}s total recording. ` +
       `Active speaking time: ${activeSpeakingDurationSeconds.toFixed(1)}s (excluding ${(totalDurationSeconds - activeSpeakingDurationSeconds).toFixed(1)}s silences). ` +
-      `Pace: ${activeWpm} active WPM (${overallWpm} overall WPM) classified as ${tempoStatus}.`
+      `Pace: ${activeWpm} active WPM (${overallWpm} overall WPM) classified as ${tempoStatus} (${paceConsistency}).`
 
     return {
       overallWpm,
