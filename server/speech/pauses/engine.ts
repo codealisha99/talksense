@@ -28,7 +28,11 @@ export class PauseAnalysisEngine {
     this.thresholds = { ...DEFAULT_PAUSE_THRESHOLDS, ...thresholds }
   }
 
-  public categorizePause(duration: number, previousWordPunct?: string): PauseCategory {
+  public categorizePause(
+    duration: number,
+    previousWordPunct?: string,
+    previousWordClean?: string,
+  ): PauseCategory {
     if (duration >= this.thresholds.longSilenceThresholdSeconds) {
       return 'LONG_SILENCE'
     }
@@ -36,13 +40,21 @@ export class PauseAnalysisEngine {
     // Check if the preceding token has terminal or clause-boundary punctuation
     const hasPunctuation = previousWordPunct && /[.,!?;:]$/.test(previousWordPunct.trim())
 
+    // Mid-phrase hesitation cues: pausing immediately after incomplete function words (conjunctions, prepositions)
+    const lowerPrev = (previousWordClean || '').toLowerCase()
+    const isMidPhraseFunctionWord = /^(and|but|or|so|because|that|in|on|at|to|with|for|if|when|while)$/.test(lowerPrev)
+
     if (duration >= this.thresholds.hesitationThresholdSeconds) {
-      // An extended pause with no punctuation in between indicates unscripted hesitation
-      return hasPunctuation ? 'GRAMMATICAL_PAUSE' : 'HESITATION_PAUSE'
+      if (hasPunctuation) {
+        return 'GRAMMATICAL_PAUSE'
+      }
+      return 'HESITATION_PAUSE'
     }
 
     if (duration >= this.thresholds.minNoticeablePauseSeconds) {
-      return hasPunctuation ? 'GRAMMATICAL_PAUSE' : 'NORMAL_ARTICULATION'
+      if (hasPunctuation) return 'GRAMMATICAL_PAUSE'
+      if (isMidPhraseFunctionWord && duration >= 0.35) return 'HESITATION_PAUSE'
+      return 'NORMAL_ARTICULATION'
     }
 
     return 'NORMAL_ARTICULATION'
@@ -84,7 +96,7 @@ export class PauseAnalysisEngine {
 
       // Only evaluate pauses that meet the minimum noticeable threshold
       if (gap >= this.thresholds.minNoticeablePauseSeconds) {
-        const category = this.categorizePause(gap, prev.punctuatedText || prev.text)
+        const category = this.categorizePause(gap, prev.punctuatedText || prev.text, prev.text)
 
         if (gap < this.thresholds.hesitationThresholdSeconds) {
           shortCount++
