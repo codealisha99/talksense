@@ -60,4 +60,8 @@ export const api = {
   grade: (id: string) => post<PublicResult>(`/sessions/${id}/grade`, { deviceId }),
   result: (id: string) => request<PublicResult>(`/results/${id}`),
   history: () => request<HistoryItem[]>(`/devices/${deviceId}/history`),
+  getSpeechReport: (sessionId: string) => request<import('./speech.ts').SpeechReport>(`/sessions/${sessionId}/speech`),
+  deleteRecording: (recordingId: string) =>
+    request<{ deleted: boolean }>(`/recordings/${recordingId}`, { method: 'DELETE' }, { deviceId }),
 }
+

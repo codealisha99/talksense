@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { DIMENSIONS, shareText, type ObjectiveStatus, type PublicResult } from '../rubric.ts'
 import { Check } from './Processing.tsx'
 import { Arrow, Button, Screen, easeOut } from './primitives.tsx'
+import SpeechAnalysisPanel from './speech/SpeechAnalysisPanel.tsx'
 
 // Choreography (seconds): number counts up, the level stamp lands, then the breakdown deals in.
 const T_COUNT = 0.25
@@ -13,7 +14,8 @@ const T_DETAIL = T_STAMP + 0.35
 type Props = { result: PublicResult; transcript?: string; isOwner: boolean; onNewTopic: () => void }
 
 export default function Result({ result, transcript, isOwner, onNewTopic }: Props) {
-  const { grade, score } = result
+  const { grade, score, speechReport } = result
+  const [activeTab, setActiveTab] = useState<'knowledge' | 'speech'>('knowledge')
   const count = useMotionValue(0)
   const shown = useTransform(count, (v) => Math.round(v))
   const [copied, setCopied] = useState(false)
@@ -50,83 +52,144 @@ export default function Result({ result, transcript, isOwner, onNewTopic }: Prop
           <h1 className="title">{result.topic}</h1>
         </div>
 
-        <div className="score-hero">
-          <motion.span className="score-num" aria-label={`${score} out of 100`}>{shown}</motion.span>
-          <span className="score-of">/100</span>
-          <motion.span
-            className="stamp"
-            initial={{ opacity: 0, scale: 2.4, rotate: -14 }}
-            animate={{ opacity: 1, scale: 1, rotate: -5 }}
-            transition={{ delay: T_STAMP, type: 'spring', stiffness: 520, damping: 22, mass: 0.9 }}
-          >
-            {result.level}
-          </motion.span>
-        </div>
-
-        <Reveal delay={T_DETAIL}>
-          <p className="heard" style={{ color: 'var(--ink)', margin: 0 }}>{grade.summary}</p>
-        </Reveal>
-
-        <Reveal delay={T_DETAIL + 0.1}>
-          <p className="kicker">Rubric</p>
-          <div className="rubric">
-            {DIMENSIONS.map((d, row) => {
-              const { score: s, reason } = grade.dimensions[d.id]
-              return (
-                <div className="rubric-row" key={d.id}>
-                  <h4>{d.label}<small>{Math.round(d.weight * 100)}% WEIGHT · {s}/4</small></h4>
-                  <div className="cells" aria-label={`${s} of 4`}>
-                    {[0, 1, 2, 3].map((cell) => (
-                      <div className="cell" key={cell}>
-                        {cell < s && (
-                          <motion.div
-                            initial={{ scaleX: 0 }}
-                            animate={{ scaleX: 1 }}
-                            transition={{ delay: T_DETAIL + 0.25 + row * 0.12 + cell * 0.07, duration: 0.35, ease: easeOut }}
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <p>{reason}</p>
-                </div>
-              )
-            })}
+        {/* Tab switcher: Oral Exam Rubric vs Speech Intelligence */}
+        {speechReport && (
+          <div style={{
+            display: 'flex',
+            gap: 8,
+            borderBottom: '1px solid var(--line)',
+            paddingBottom: 8,
+          }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('knowledge')}
+              style={{
+                background: activeTab === 'knowledge' ? 'var(--ink)' : 'transparent',
+                color: activeTab === 'knowledge' ? 'var(--paper)' : 'var(--muted)',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                padding: '8px 16px',
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              Oral Exam Rubric
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('speech')}
+              style={{
+                background: activeTab === 'speech' ? 'var(--ink)' : 'transparent',
+                color: activeTab === 'speech' ? 'var(--paper)' : 'var(--muted)',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                padding: '8px 16px',
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <span>Speech Intelligence</span>
+              <span style={{
+                background: 'var(--signal)',
+                color: 'var(--signal-ink)',
+                fontSize: 10,
+                padding: '1px 5px',
+                borderRadius: 4,
+              }}>
+                v1
+              </span>
+            </button>
           </div>
-        </Reveal>
-
-        <Reveal delay={T_DETAIL + 0.3}>
-          <p className="kicker">Objectives</p>
-          <ul className="checks">
-            {grade.objectives.map((o) => (
-              <li key={o.objective}>
-                <StatusMark status={o.status} />
-                <div>
-                  {o.objective}
-                  {o.evidence && <q><mark>{o.evidence}</mark></q>}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Reveal>
-
-        {grade.misconceptions.length > 0 && (
-          <Reveal delay={T_DETAIL + 0.4}>
-            <p className="kicker" style={{ color: 'var(--bad)' }}>Things to correct</p>
-            <ul className="notes">{grade.misconceptions.map((m) => <li key={m}>{m}</li>)}</ul>
-          </Reveal>
         )}
 
-        <Reveal delay={T_DETAIL + 0.45}>
-          <p className="kicker">Next steps</p>
-          <ul className="notes">{grade.nextSteps.map((s) => <li key={s}>{s}</li>)}</ul>
-        </Reveal>
+        {activeTab === 'speech' && speechReport ? (
+          <SpeechAnalysisPanel report={speechReport} isOwner={isOwner} />
+        ) : (
+          <>
+            <div className="score-hero">
+              <motion.span className="score-num" aria-label={`${score} out of 100`}>{shown}</motion.span>
+              <span className="score-of">/100</span>
+              <motion.span
+                className="stamp"
+                initial={{ opacity: 0, scale: 2.4, rotate: -14 }}
+                animate={{ opacity: 1, scale: 1, rotate: -5 }}
+                transition={{ delay: T_STAMP, type: 'spring', stiffness: 520, damping: 22, mass: 0.9 }}
+              >
+                {result.level}
+              </motion.span>
+            </div>
 
-        {transcript && (
-          <details className="transcript">
-            <summary>What we heard</summary>
-            <p>{transcript}</p>
-          </details>
+            <Reveal delay={T_DETAIL}>
+              <p className="heard" style={{ color: 'var(--ink)', margin: 0 }}>{grade.summary}</p>
+            </Reveal>
+
+            <Reveal delay={T_DETAIL + 0.1}>
+              <p className="kicker">Rubric</p>
+              <div className="rubric">
+                {DIMENSIONS.map((d, row) => {
+                  const { score: s, reason } = grade.dimensions[d.id]
+                  return (
+                    <div className="rubric-row" key={d.id}>
+                      <h4>{d.label}<small>{Math.round(d.weight * 100)}% WEIGHT · {s}/4</small></h4>
+                      <div className="cells" aria-label={`${s} of 4`}>
+                        {[0, 1, 2, 3].map((cell) => (
+                          <div className="cell" key={cell}>
+                            {cell < s && (
+                              <motion.div
+                                initial={{ scaleX: 0 }}
+                                animate={{ scaleX: 1 }}
+                                transition={{ delay: T_DETAIL + 0.25 + row * 0.12 + cell * 0.07, duration: 0.35, ease: easeOut }}
+                              />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <p>{reason}</p>
+                    </div>
+                  )
+                })}
+              </div>
+            </Reveal>
+
+            <Reveal delay={T_DETAIL + 0.3}>
+              <p className="kicker">Objectives</p>
+              <ul className="checks">
+                {grade.objectives.map((o) => (
+                  <li key={o.objective}>
+                    <StatusMark status={o.status} />
+                    <div>
+                      {o.objective}
+                      {o.evidence && <q><mark>{o.evidence}</mark></q>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Reveal>
+
+            {grade.misconceptions.length > 0 && (
+              <Reveal delay={T_DETAIL + 0.4}>
+                <p className="kicker" style={{ color: 'var(--bad)' }}>Things to correct</p>
+                <ul className="notes">{grade.misconceptions.map((m) => <li key={m}>{m}</li>)}</ul>
+              </Reveal>
+            )}
+
+            <Reveal delay={T_DETAIL + 0.45}>
+              <p className="kicker">Next steps</p>
+              <ul className="notes">{grade.nextSteps.map((s) => <li key={s}>{s}</li>)}</ul>
+            </Reveal>
+
+            {transcript && (
+              <details className="transcript">
+                <summary>What we heard</summary>
+                <p>{transcript}</p>
+              </details>
+            )}
+          </>
         )}
 
         <motion.div

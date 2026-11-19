@@ -142,7 +142,7 @@ api.post('/topics/random', async (c) => {
   const key = keyOf(c)
   const { deviceId, niche } = randomTopicBody.parse(await c.req.json())
   const recent = await sql`SELECT topic FROM sessions WHERE device_id = ${deviceId} ORDER BY created_at DESC LIMIT ${AVOID_RECENT_TOPICS}`
-  const { area, prompt } = randomTopicPrompt(niche, recent.map((r) => r.topic))
+  const { area, prompt } = randomTopicPrompt(niche, recent.map((r: any) => r.topic))
   const idea = await structured<RandomTopic>(key, TOPIC_MODEL, 'random_topic', RANDOM_TOPIC_SCHEMA, prompt)
   const topic = idea.topic.trim().slice(0, MAX_TOPIC_LENGTH)
   if (topic.length < 2) throw new UpstreamError('OpenAI returned an empty idea. Roll again.', 502)
@@ -322,7 +322,7 @@ api.get('/devices/:deviceId/history', async (c) => {
     SELECT id, topic, minutes, score, level, graded_at, grade->'dimensions' AS dimensions FROM sessions
     WHERE device_id = ${deviceId} AND grade IS NOT NULL
     ORDER BY graded_at DESC LIMIT 200`
-  const data: HistoryItem[] = rows.map((r) => ({
+  const data: HistoryItem[] = rows.map((r: any) => ({
     id: r.id, topic: r.topic, minutes: r.minutes, score: r.score, level: r.level, gradedAt: new Date(r.graded_at).toISOString(),
     dimensions: Object.fromEntries(DIMENSIONS.map((d) => [d.id, Number(r.dimensions?.[d.id]?.score ?? 0)])) as HistoryItem['dimensions'],
   }))
