@@ -16,29 +16,43 @@ export class SpeechAnalysisError extends Error {
 }
 
 export class AudioStorageError extends SpeechAnalysisError {
-  constructor(message: string, public readonly recordingId?: string) {
+  public readonly recordingId?: string
+
+  constructor(message: string, recordingId?: string) {
     super(message, 'AUDIO_STORAGE_ERROR')
+    this.recordingId = recordingId
   }
 }
 
 export class AudioFormatError extends SpeechAnalysisError {
-  constructor(message: string, public readonly detectedMime?: string) {
+  public readonly detectedMime?: string
+
+  constructor(message: string, detectedMime?: string) {
     super(message, 'AUDIO_FORMAT_ERROR')
+    this.detectedMime = detectedMime
   }
 }
 
 export class TranscriptionAlignmentError extends SpeechAnalysisError {
-  constructor(message: string, public readonly provider?: string) {
+  public readonly provider?: string
+
+  constructor(message: string, provider?: string) {
     super(message, 'TRANSCRIPTION_ALIGNMENT_ERROR')
+    this.provider = provider
   }
 }
 
 export class SpeechModuleError extends SpeechAnalysisError {
+  public readonly moduleName: 'pace' | 'fillers' | 'pauses' | 'repetition' | 'language' | 'acoustics'
+  public readonly originalError?: unknown
+
   constructor(
-    public readonly moduleName: 'pace' | 'fillers' | 'pauses' | 'repetition' | 'language' | 'acoustics',
+    moduleName: 'pace' | 'fillers' | 'pauses' | 'repetition' | 'language' | 'acoustics',
     message: string,
-    public readonly originalError?: unknown,
+    originalError?: unknown,
   ) {
     super(`[Speech Module: ${moduleName}] ${message}`, `MODULE_${moduleName.toUpperCase()}_ERROR`)
+    this.moduleName = moduleName
+    this.originalError = originalError
   }
 }
