@@ -74,3 +74,32 @@ test('SpeakingPaceEngine generates segment-level rolling pace windows', () => {
   assert.ok(segments[0].wordsCount > 0)
   assert.ok(segments[0].wpm > 0)
 })
+
+test('SpeakingPaceEngine handles edge cases: empty transcript, zero duration, single word', () => {
+  const engine = new SpeakingPaceEngine()
+
+  // 1. Empty transcript
+  const emptyTranscript: NormalizedTranscript = {
+    text: '',
+    language: 'en',
+    durationSeconds: 0,
+    provider: 'test',
+    words: [],
+  }
+  const emptyMetrics = engine.analyze(emptyTranscript, 0)
+  assert.equal(emptyMetrics.overallWpm, 0)
+  assert.equal(emptyMetrics.activeWpm, 0)
+  assert.equal(emptyMetrics.tempoStatus, 'VERY_SLOW')
+
+  // 2. Single word in 60-second audio
+  const singleWordTranscript: NormalizedTranscript = {
+    text: 'Hello',
+    language: 'en',
+    durationSeconds: 60.0,
+    provider: 'test',
+    words: [{ text: 'Hello', start: 10.0, end: 10.5, confidence: null }],
+  }
+  const singleMetrics = engine.analyze(singleWordTranscript, 60.0)
+  assert.equal(singleMetrics.overallWpm, 1) // 1 word in 1 minute = 1 WPM
+  assert.ok(singleMetrics.activeSpeakingDurationSeconds <= 1.0)
+})
