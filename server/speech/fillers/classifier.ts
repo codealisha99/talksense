@@ -54,13 +54,20 @@ export class FillerContextClassifier {
           reason: 'Preposition introducing an exemplar or comparison.',
         }
       }
-      // Isolated "like" mid-clause or clause-initial -> Discourse filler
-      const hasPauseOrComma = prevPunct && /[,.?!]/.test(prevPunct)
-      if (hasPauseOrComma || startIndex === 0) {
+      const hasPauseOrComma = (prevPunct && /[,.?!]/.test(prevPunct)) || startIndex === 0
+      if (hasPauseOrComma) {
         return {
           classification: 'CONFIRMED_FILLER',
           confidence: 0.85,
           reason: 'Parenthetical hesitation token lacking syntactic connection.',
+        }
+      }
+      // "things like this", "algorithms like quicksort" -> Prepositional exemplar
+      if (prevWord && !['was', 'is', 'were', 'and', 'so', 'but'].includes(prevWord) && nextWord && !['um', 'uh', 'you', 'i', 'we'].includes(nextWord)) {
+        return {
+          classification: 'MEANINGFUL_USAGE',
+          confidence: 0.88,
+          reason: 'Preposition introducing an exemplar or comparison.',
         }
       }
       return {
@@ -72,25 +79,19 @@ export class FillerContextClassifier {
 
     // 3. Disambiguate "actually"
     if (entry.canonical === 'actually') {
-      // "is actually", "can actually", "not actually", "actually works" -> Adverbial modifier
-      if (prevWord && ['is', 'are', 'was', 'were', 'can', 'could', 'not', 'it'].includes(prevWord)) {
+      const hasPauseOrComma = (prevPunct && /[,.?!]/.test(prevPunct)) || startIndex === 0
+      if (hasPauseOrComma) {
         return {
-          classification: 'MEANINGFUL_USAGE',
-          confidence: 0.88,
-          reason: 'Adverb qualifying a factual assertion.',
-        }
-      }
-      if (nextWord && ['happens', 'works', 'does', 'did', 'exists', 'matters', 'means'].includes(nextWord)) {
-        return {
-          classification: 'MEANINGFUL_USAGE',
+          classification: 'DISCOURSE_MARKER',
           confidence: 0.85,
-          reason: 'Adverb modifying an active predicate.',
+          reason: 'Sentence-level discourse marker for contrast or framing.',
         }
       }
+      // Within-clause adverb modifying a verb, adjective, or clause
       return {
-        classification: 'DISCOURSE_MARKER',
-        confidence: 0.75,
-        reason: 'Sentence-level discourse marker for contrast or emphasis.',
+        classification: 'MEANINGFUL_USAGE',
+        confidence: 0.88,
+        reason: 'Adverb qualifying a factual assertion.',
       }
     }
 

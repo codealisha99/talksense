@@ -36,6 +36,14 @@ export const RULE_BASED_GRAMMAR_CHECKS: GrammarRule[] = [
     explanation: 'Plural complement requires "there are".',
     confidence: 0.85,
   },
+  {
+    id: 'sva-plural-noun-is',
+    category: 'SUBJECT_VERB_AGREEMENT',
+    pattern: /\b(times|servers|methods|results|factors|systems|metrics|operations)\s+(is)\b/i,
+    correction: (m) => `${m[1]} are`,
+    explanation: 'Plural noun subject requires plural verb "are" instead of "is".',
+    confidence: 0.9,
+  },
 
   // Article / Preposition
   {
