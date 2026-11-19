@@ -28,12 +28,57 @@ async function call(path: string, key: string, init: RequestInit): Promise<any> 
   throw new UpstreamError(`OpenAI error (${res.status}). Please try again.`, 502)
 }
 
+export type RawWhisperWord = {
+  word: string
+  start: number
+  end: number
+}
+
+export type RawWhisperSegment = {
+  id: number
+  start: number
+  end: number
+  text: string
+}
+
+export type RawWhisperVerboseResponse = {
+  text: string
+  language?: string
+  duration?: number
+  words?: RawWhisperWord[]
+  segments?: RawWhisperSegment[]
+}
+
 export async function transcribe(key: string, model: string, audio: File): Promise<string> {
   const form = new FormData()
   form.append('file', audio, audio.name || 'answer.webm')
   form.append('model', model)
   const body = await call('/audio/transcriptions', key, { method: 'POST', body: form })
   return String(body?.text ?? '').trim()
+}
+
+export async function transcribeVerbose(
+  key: string,
+  model: string,
+  audio: File | Blob,
+  fallbackFilename: string = 'answer.webm',
+): Promise<RawWhisperVerboseResponse> {
+  const form = new FormData()
+  const name = (audio as any).name || fallbackFilename
+  form.append('file', audio, name)
+  form.append('model', model)
+  form.append('response_format', 'verbose_json')
+  form.append('timestamp_granularities[]', 'word')
+  form.append('timestamp_granularities[]', 'segment')
+
+  const body = await call('/audio/transcriptions', key, { method: 'POST', body: form })
+  return {
+    text: String(body?.text ?? '').trim(),
+    language: body?.language ?? 'english',
+    duration: typeof body?.duration === 'number' ? body.duration : undefined,
+    words: Array.isArray(body?.words) ? body.words : [],
+    segments: Array.isArray(body?.segments) ? body.segments : [],
+  }
 }
 
 /** Responses API with a strict JSON schema; strict mode guarantees the shape. */
