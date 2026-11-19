@@ -17,7 +17,7 @@ export class AcousticAnalysisEngine {
   }
 
   public analyze(audioBuffer?: Buffer | Uint8Array): AcousticMetrics {
-    if (!audioBuffer || audioBuffer.byteLength < 44) {
+    if (!audioBuffer || audioBuffer.byteLength < 12) {
       return {
         status: 'UNAVAILABLE',
         meanF0Hz: null,
@@ -61,8 +61,8 @@ export class AcousticAnalysisEngine {
       const energy = AudioEnergyAnalyzer.analyze(decoded.samples)
       const pitch = this.pitchDetector.analyze(decoded.samples, decoded.sampleRateHz)
 
-      const voicedRatio = energy.totalFrames > 0
-        ? Math.round((pitch.voicedFramesCount / energy.totalFrames) * 1000) / 1000
+      const voicedRatio = pitch.totalFramesCount > 0
+        ? Math.round((pitch.voicedFramesCount / pitch.totalFramesCount) * 1000) / 1000
         : 0
 
       let pitchVariationStatus: AcousticMetrics['pitchVariationStatus'] = 'UNAVAILABLE'
